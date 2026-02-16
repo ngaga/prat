@@ -11,7 +11,7 @@ export class BootScene extends Phaser.Scene {
   }
 
   private createBoatTexture(): void {
-    const graphics = this.make.graphics({ x: 0, y: 0, add: false });
+    const graphics = this.add.graphics();
     graphics.fillStyle(0x8b4513, 1);
     graphics.fillTriangle(40, 0, 0, 30, 80, 30);
     graphics.fillStyle(0x654321, 1);

@@ -1,6 +1,6 @@
 "use client";
 
-const KOFI_USERNAME = "YOUR_KOFI_USERNAME";
+const KOFI_USERNAME = process.env.NEXT_PUBLIC_KOFI_USERNAME ?? "YOUR_KOFI_USERNAME";
 
 export function KofiButton() {
   return (

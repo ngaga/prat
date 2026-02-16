@@ -1,11 +1,24 @@
 import Phaser from "phaser";
 import { EventBus } from "../EventBus";
+import { MultiplayerManager } from "../multiplayer/MultiplayerManager";
 
 interface PratEntity {
   text: Phaser.GameObjects.Text;
   power: number;
   captured: boolean;
+  index: number;
 }
+
+const PRAT_POSITIONS = [
+  { x: 150, y: 120 },
+  { x: 400, y: 150 },
+  { x: 650, y: 200 },
+  { x: 200, y: 300 },
+  { x: 500, y: 350 },
+  { x: 600, y: 450 },
+  { x: 100, y: 450 },
+  { x: 350, y: 500 },
+];
 
 export class GameScene extends Phaser.Scene {
   private boat!: Phaser.Physics.Arcade.Sprite;
@@ -15,6 +28,8 @@ export class GameScene extends Phaser.Scene {
   private scoreText!: Phaser.GameObjects.Text;
   private readonly boatSpeed = 200;
   private readonly captureRadius = 80;
+  private multiplayer!: MultiplayerManager;
+  private remoteBoatSprites = new Map<string, Phaser.GameObjects.Sprite>();
 
   constructor() {
     super({ key: "GameScene" });
@@ -43,8 +58,78 @@ export class GameScene extends Phaser.Scene {
       })
       .setScrollFactor(0);
 
+    this.add
+      .text(784, 16, "", {
+        fontSize: "14px",
+        color: "#aaa",
+      })
+      .setOrigin(1, 0)
+      .setScrollFactor(0)
+      .setName("multiplayer-status");
+
     this.spawnInitialPrat();
+
+    this.multiplayer = new MultiplayerManager({
+      onRemotePlayerUpdate: (players) => this.updateRemoteBoats(players),
+      onPratCaptured: (pratIndex, playerId) => this.handleRemotePratCapture(pratIndex, playerId),
+      onConnected: () => this.updateMultiplayerStatus(),
+      getLocalState: () => ({
+        x: this.boat.x,
+        y: this.boat.y,
+        rotation: this.boat.rotation,
+        score: this.score,
+      }),
+    });
+    this.multiplayer.connect();
+    this.updateMultiplayerStatus();
+
     EventBus.emit("current-scene-ready", this);
+  }
+
+  shutdown(): void {
+    this.multiplayer.disconnect();
+  }
+
+  private updateMultiplayerStatus(): void {
+    const statusText = this.children.getByName("multiplayer-status") as Phaser.GameObjects.Text;
+    if (statusText) {
+      statusText.setText(this.multiplayer.isActive() ? "Multijoueur actif" : "Solo");
+    }
+  }
+
+  private updateRemoteBoats(players: Map<string, { id: string; x: number; y: number; rotation: number; color: number }>): void {
+    for (const [playerId, data] of players) {
+      let sprite = this.remoteBoatSprites.get(playerId);
+      if (!sprite) {
+        sprite = this.add.sprite(data.x, data.y, "boat");
+        sprite.setScale(0.5);
+        sprite.setTint(data.color);
+        this.remoteBoatSprites.set(playerId, sprite);
+      }
+      sprite.setPosition(data.x, data.y);
+      sprite.setRotation(data.rotation);
+    }
+    for (const playerId of this.remoteBoatSprites.keys()) {
+      if (!players.has(playerId)) {
+        const sprite = this.remoteBoatSprites.get(playerId);
+        sprite?.destroy();
+        this.remoteBoatSprites.delete(playerId);
+      }
+    }
+  }
+
+  private handleRemotePratCapture(pratIndex: number, _playerId: string): void {
+    const entity = this.pratEntities.find((entity) => entity.index === pratIndex);
+    if (entity && !entity.captured) {
+      entity.captured = true;
+      this.tweens.add({
+        targets: entity.text,
+        alpha: 0,
+        scale: 0,
+        duration: 300,
+        onComplete: () => entity.text.destroy(),
+      });
+    }
   }
 
   private spawnInitialPrat(): void {
@@ -57,12 +142,11 @@ export class GameScene extends Phaser.Scene {
     ];
 
     for (let index = 0; index < 8; index++) {
+      const position = PRAT_POSITIONS[index];
       const word = pratWords[index % pratWords.length];
       const style = styles[index % styles.length];
-      const x = Phaser.Math.Between(100, 700);
-      const y = Phaser.Math.Between(100, 500);
 
-      const text = this.add.text(x, y, word, {
+      const text = this.add.text(position.x, position.y, word, {
         fontSize: `${24 + index * 4}px`,
         fontStyle: style.fontStyle,
         color: "#ffd700",
@@ -73,6 +157,7 @@ export class GameScene extends Phaser.Scene {
         text,
         power: style.power,
         captured: false,
+        index,
       });
     }
   }
@@ -113,6 +198,10 @@ export class GameScene extends Phaser.Scene {
         entity.captured = true;
         this.score += entity.power;
         this.scoreText.setText(`Prat capturés: ${this.score}`);
+
+        if (this.multiplayer.isActive()) {
+          this.multiplayer.broadcastPratCapture(entity.index, this.score);
+        }
 
         this.tweens.add({
           targets: entity.text,

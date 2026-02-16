@@ -34,13 +34,21 @@ npm run dev
 
 ### Variables d'environnement
 
-Créer `.env.local`:
+Créer `.env.local` (requis pour le multijoueur) :
 
 ```
 NEXT_PUBLIC_SUPABASE_URL=https://xxx.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=xxx
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=xxx
 ```
+
+Sans Supabase, le jeu fonctionne en solo. Avec ces variables, le multijoueur temps réel est activé (plusieurs joueurs sur la même partie).
 
 ### Ko-fi
 
-Remplacer `YOUR_KOFI_USERNAME` dans `src/components/KofiButton.tsx` par ton identifiant Ko-fi.
+Variable d'environnement `NEXT_PUBLIC_KOFI_USERNAME` ou modifier `KofiButton.tsx`.
+
+### Multijoueur (Supabase)
+
+1. Créer un projet sur [Supabase](https://supabase.com)
+2. Récupérer URL et clé anon dans Settings > API
+3. Ajouter `NEXT_PUBLIC_SUPABASE_URL` et `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` dans Render

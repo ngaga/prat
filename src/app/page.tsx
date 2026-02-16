@@ -1,14 +1,5 @@
-import dynamic from "next/dynamic";
+import { GameSection } from "@/components/GameSection";
 import { KofiButton } from "@/components/KofiButton";
-
-const PhaserGame = dynamic(() => import("@/components/PhaserGame").then((mod) => mod.PhaserGame), {
-  ssr: false,
-  loading: () => (
-    <div className="flex min-h-[400px] items-center justify-center bg-[#1a3a52] text-white">
-      Chargement du jeu...
-    </div>
-  ),
-});
 
 export default function Home() {
   return (
@@ -24,7 +15,7 @@ export default function Home() {
           gros ou en italique, plus ils valent de points.
         </p>
         <div className="overflow-hidden rounded-lg border-2 border-amber-500/30 shadow-xl">
-          <PhaserGame />
+          <GameSection />
         </div>
       </main>
     </div>

@@ -1,21 +1,22 @@
 "use client";
 
 import { forwardRef, useEffect, useLayoutEffect, useRef } from "react";
+import type { Game, Scene } from "phaser";
 import StartGame from "@/game/main";
 import { EventBus } from "@/game/EventBus";
 
 export interface PhaserGameRef {
-  game: Phaser.Game | null;
-  scene: Phaser.Scene | null;
+  game: Game | null;
+  scene: Scene | null;
 }
 
 interface PhaserGameProps {
-  currentActiveScene?: (scene: Phaser.Scene) => void;
+  currentActiveScene?: (scene: Scene) => void;
 }
 
 export const PhaserGame = forwardRef<PhaserGameRef, PhaserGameProps>(
   function PhaserGame({ currentActiveScene }, ref) {
-    const gameRef = useRef<Phaser.Game | null>(null);
+    const gameRef = useRef<Game | null>(null);
 
     useLayoutEffect(() => {
       const container = document.getElementById("game-container");
@@ -45,7 +46,7 @@ export const PhaserGame = forwardRef<PhaserGameRef, PhaserGameProps>(
     }, [ref]);
 
     useEffect(() => {
-      const handler = (scene: Phaser.Scene) => {
+      const handler = (scene: Scene) => {
         currentActiveScene?.(scene);
         const refValue = {
           game: gameRef.current,

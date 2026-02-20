@@ -26,11 +26,19 @@ export interface MultiplayerCallbacks {
   getLocalState: () => { x: number; y: number; rotation: number; score: number };
 }
 
+function generatePlayerId(): string {
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (character) => {
+    const random = (Math.random() * 16) | 0;
+    const value = character === "x" ? random : (random & 0x3) | 0x8;
+    return value.toString(16);
+  });
+}
+
 function getOrCreatePlayerId(): string {
   const storageKey = "prat-player-id";
   let id = typeof window !== "undefined" ? localStorage.getItem(storageKey) : null;
   if (!id) {
-    id = crypto.randomUUID();
+    id = generatePlayerId();
     localStorage.setItem(storageKey, id);
   }
   return id;

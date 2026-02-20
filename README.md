@@ -47,6 +47,10 @@ Sans Supabase, le jeu fonctionne en solo. Avec ces variables, le multijoueur tem
 
 Variable d'environnement `NEXT_PUBLIC_KOFI_USERNAME` ou modifier `KofiButton.tsx`.
 
+### Musique de fond
+
+Ajouter un fichier `public/sounds/music.mp3` (libre de droits). La musique démarre au premier clic ou touche (politique autoplay des navigateurs).
+
 ### Multijoueur (Supabase)
 
 1. Créer un projet sur [Supabase](https://supabase.com)

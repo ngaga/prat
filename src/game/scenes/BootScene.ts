@@ -8,6 +8,7 @@ export class BootScene extends Phaser.Scene {
 
   preload(): void {
     this.createBoatTexture();
+    this.load.audio("music", "/sounds/music.mp3");
   }
 
   private createBoatTexture(): void {
@@ -24,6 +25,6 @@ export class BootScene extends Phaser.Scene {
 
   create(): void {
     EventBus.emit("current-scene-ready", this);
-    this.scene.start("GameScene");
+    this.scene.start("MenuScene");
   }
 }

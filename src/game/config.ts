@@ -11,6 +11,9 @@ export const gameConfig: Types.Core.GameConfig = {
     width: 800,
     height: 600,
   },
+  audio: {
+    noAudio: true,
+  },
   physics: {
     default: "arcade",
     arcade: {

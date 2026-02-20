@@ -29,7 +29,8 @@ export class GameScene extends Phaser.Scene {
   private readonly boatSpeed = 200;
   private readonly captureRadius = 80;
   private multiplayer!: MultiplayerManager;
-  private remoteBoatSprites = new Map<string, Phaser.GameObjects.Sprite>();
+  private remoteBoatSprites = new Map<string, Phaser.GameObjects.Image>();
+  private isSceneActive = true;
 
   constructor() {
     super({ key: "GameScene" });
@@ -70,15 +71,27 @@ export class GameScene extends Phaser.Scene {
     this.spawnInitialPrat();
 
     this.multiplayer = new MultiplayerManager({
-      onRemotePlayerUpdate: (players) => this.updateRemoteBoats(players),
-      onPratCaptured: (pratIndex, playerId) => this.handleRemotePratCapture(pratIndex, playerId),
-      onConnected: () => this.updateMultiplayerStatus(),
-      getLocalState: () => ({
+      onRemotePlayerUpdate: (players) => {
+        if (!this.isSceneActive) return;
+        this.updateRemoteBoats(players);
+      },
+      onPratCaptured: (pratIndex, playerId) => {
+        if (!this.isSceneActive) return;
+        this.handleRemotePratCapture(pratIndex, playerId);
+      },
+      onConnected: () => {
+        if (!this.isSceneActive) return;
+        this.updateMultiplayerStatus();
+      },
+      getLocalState: () => {
+        if (!this.isSceneActive) return { x: 0, y: 0, rotation: 0, score: 0 };
+        return {
         x: this.boat.x,
         y: this.boat.y,
         rotation: this.boat.rotation,
         score: this.score,
-      }),
+        };
+      },
     });
     this.multiplayer.connect();
     this.updateMultiplayerStatus();
@@ -87,6 +100,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   shutdown(): void {
+    this.isSceneActive = false;
     this.multiplayer.disconnect();
   }
 
@@ -98,23 +112,31 @@ export class GameScene extends Phaser.Scene {
   }
 
   private updateRemoteBoats(players: Map<string, { id: string; x: number; y: number; rotation: number; color: number }>): void {
-    for (const [playerId, data] of players) {
-      let sprite = this.remoteBoatSprites.get(playerId);
-      if (!sprite) {
-        sprite = this.add.sprite(data.x, data.y, "boat");
-        sprite.setScale(0.5);
-        sprite.setTint(data.color);
-        this.remoteBoatSprites.set(playerId, sprite);
+    if (!this.isSceneActive || !this.scene?.isActive?.() || !this.add) return;
+    try {
+      for (const [playerId, data] of players) {
+        if (data.x == null || data.y == null) continue;
+        let sprite = this.remoteBoatSprites.get(playerId);
+        if (!sprite) {
+          if (!this.textures.exists("boat")) return;
+          sprite = this.add.image(data.x, data.y, "boat");
+          sprite.setScale(0.5);
+          sprite.setTint(data.color);
+          sprite.setDepth(5);
+          this.remoteBoatSprites.set(playerId, sprite);
+        }
+        sprite.setPosition(data.x, data.y);
+        sprite.setRotation(data.rotation);
       }
-      sprite.setPosition(data.x, data.y);
-      sprite.setRotation(data.rotation);
-    }
-    for (const playerId of this.remoteBoatSprites.keys()) {
-      if (!players.has(playerId)) {
-        const sprite = this.remoteBoatSprites.get(playerId);
-        sprite?.destroy();
-        this.remoteBoatSprites.delete(playerId);
+      for (const playerId of this.remoteBoatSprites.keys()) {
+        if (!players.has(playerId)) {
+          const sprite = this.remoteBoatSprites.get(playerId);
+          sprite?.destroy();
+          this.remoteBoatSprites.delete(playerId);
+        }
       }
+    } catch {
+      // Scene may be destroyed, ignore
     }
   }
 

@@ -6,37 +6,40 @@ export class MenuScene extends Phaser.Scene {
   }
 
   create(): void {
-    this.add.rectangle(400, 300, 800, 600, 0x1a3a52);
+    const centerX = this.cameras.main.centerX;
+    const centerY = this.cameras.main.centerY;
+
+    this.add.rectangle(centerX, centerY, 800, 600, 0xffffff);
 
     const title = this.add
-      .text(400, 200, "Prat", {
+      .text(centerX, centerY - 100, "Prat", {
         fontSize: "64px",
-        color: "#ffd700",
+        color: "#000",
       })
       .setOrigin(0.5);
 
     const subtitle = this.add
-      .text(400, 270, "Chasse aux Prat en mer", {
+      .text(centerX, centerY - 30, "Chasse aux Prat en mer", {
         fontSize: "20px",
-        color: "#aaa",
+        color: "#333",
       })
       .setOrigin(0.5);
 
     const playButton = this.add
-      .text(400, 380, "Jouer", {
+      .text(centerX, centerY + 80, "Jouer", {
         fontSize: "32px",
         color: "#fff",
-        backgroundColor: "#2d5a7b",
+        backgroundColor: "#333",
       })
       .setOrigin(0.5)
       .setPadding(24, 12)
       .setInteractive({ useHandCursor: true });
 
     playButton.on("pointerover", () => {
-      playButton.setStyle({ backgroundColor: "#4a90b8" });
+      playButton.setStyle({ backgroundColor: "#555" });
     });
     playButton.on("pointerout", () => {
-      playButton.setStyle({ backgroundColor: "#2d5a7b" });
+      playButton.setStyle({ backgroundColor: "#333" });
     });
     playButton.on("pointerdown", () => {
       this.startGame();

@@ -13,14 +13,18 @@ export class BootScene extends Phaser.Scene {
 
   private createBoatTexture(): void {
     const graphics = this.add.graphics();
-    graphics.fillStyle(0x8b4513, 1);
-    graphics.fillTriangle(40, 0, 0, 30, 80, 30);
-    graphics.fillStyle(0x654321, 1);
-    graphics.fillRect(35, 30, 10, 40);
-    graphics.fillStyle(0xffffff, 0.9);
-    graphics.fillTriangle(45, 30, 45, 0, 55, 15);
-    graphics.generateTexture("boat", 80, 70);
+    graphics.fillStyle(0xffffff, 1);
+    graphics.fillRect(0, 0, 64, 64);
+    graphics.generateTexture("sea", 64, 64);
     graphics.destroy();
+
+    const boatGraphics = this.add.graphics();
+    boatGraphics.fillStyle(0x000000, 1);
+    boatGraphics.fillTriangle(40, 0, 0, 30, 80, 30);
+    boatGraphics.fillRect(35, 30, 10, 40);
+    boatGraphics.fillTriangle(45, 30, 45, 0, 55, 15);
+    boatGraphics.generateTexture("boat", 80, 70);
+    boatGraphics.destroy();
   }
 
   create(): void {

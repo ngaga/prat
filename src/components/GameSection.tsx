@@ -7,7 +7,7 @@ const PhaserGame = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="flex min-h-[400px] items-center justify-center bg-[#1a3a52] text-white">
+      <div className="flex min-h-[400px] items-center justify-center bg-white text-black">
         Chargement du jeu...
       </div>
     ),

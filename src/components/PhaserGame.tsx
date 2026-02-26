@@ -64,6 +64,6 @@ export const PhaserGame = forwardRef<PhaserGameRef, PhaserGameProps>(
       };
     }, [currentActiveScene, ref]);
 
-    return <div id="game-container" className="min-h-[400px]" />;
+    return <div id="game-container" className="h-full w-full" />;
   }
 );

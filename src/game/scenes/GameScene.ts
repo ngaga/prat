@@ -14,7 +14,8 @@ interface RemoteBoatData {
   nameLabel: Phaser.GameObjects.Text;
 }
 
-const WORLD_SIZE = 50000;
+const WORLD_SIZE = 2000;
+const WORLD_MARGIN = 50;
 const SEA_TILE_SIZE = 2000;
 const PRAT_SPAWN_INTERVAL_MS = 800;
 const PRAT_SPAWN_RADIUS = 600;
@@ -42,6 +43,10 @@ export class GameScene extends Phaser.Scene {
   private lifeBar!: Phaser.GameObjects.Graphics;
   private manaBar!: Phaser.GameObjects.Graphics;
   private sea!: Phaser.GameObjects.TileSprite;
+  private borderTop!: Phaser.GameObjects.TileSprite;
+  private borderBottom!: Phaser.GameObjects.TileSprite;
+  private borderLeft!: Phaser.GameObjects.TileSprite;
+  private borderRight!: Phaser.GameObjects.TileSprite;
 
   constructor() {
     super({ key: "GameScene" });
@@ -52,6 +57,8 @@ export class GameScene extends Phaser.Scene {
 
     this.sea = this.add.tileSprite(0, 0, SEA_TILE_SIZE, SEA_TILE_SIZE, "sea");
     this.sea.setOrigin(0.5);
+
+    this.createWorldBorders();
 
     this.cursors = this.input.keyboard!.createCursorKeys();
 
@@ -75,7 +82,7 @@ export class GameScene extends Phaser.Scene {
     this.multiplayer.connect();
 
     this.boat = this.physics.add.sprite(0, 0, "boat");
-    this.boat.setCollideWorldBounds(false);
+    this.boat.setCollideWorldBounds(true);
     this.boat.setScale(0.5);
 
     this.boatNameLabel = this.add
@@ -115,6 +122,28 @@ export class GameScene extends Phaser.Scene {
     this.updateMultiplayerStatus();
 
     EventBus.emit("current-scene-ready", this);
+  }
+
+  private createWorldBorders(): void {
+    const borderThickness = 2;
+    const worldExtent = WORLD_SIZE * 2;
+
+    this.borderTop = this.add.tileSprite(0, -WORLD_SIZE, worldExtent, borderThickness, "cascade");
+    this.borderTop.setOrigin(0.5, 0);
+    this.borderTop.setDepth(1);
+
+    this.borderBottom = this.add.tileSprite(0, WORLD_SIZE, worldExtent, borderThickness, "cascade");
+    this.borderBottom.setOrigin(0.5, 1);
+    this.borderBottom.setAngle(180);
+    this.borderBottom.setDepth(1);
+
+    this.borderLeft = this.add.tileSprite(-WORLD_SIZE, 0, borderThickness, worldExtent, "cascade");
+    this.borderLeft.setOrigin(0, 0.5);
+    this.borderLeft.setDepth(1);
+
+    this.borderRight = this.add.tileSprite(WORLD_SIZE, 0, borderThickness, worldExtent, "cascade");
+    this.borderRight.setOrigin(1, 0.5);
+    this.borderRight.setDepth(1);
   }
 
   private createLifeAndManaBars(): void {
@@ -210,14 +239,18 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  private clampToWorldBounds(value: number): number {
+    return Phaser.Math.Clamp(value, -WORLD_SIZE + WORLD_MARGIN, WORLD_SIZE - WORLD_MARGIN);
+  }
+
   private spawnPratNearBoat(): void {
     for (let count = 0; count < 3; count++) {
       const activeCount = this.pratEntities.filter((entity) => !entity.captured).length;
       if (activeCount >= MAX_PRATS) return;
       const angle = Math.random() * Math.PI * 2;
       const distance = PRAT_SPAWN_RADIUS + Math.random() * 400;
-      const x = this.boat.x + Math.cos(angle) * distance;
-      const y = this.boat.y + Math.sin(angle) * distance;
+      const x = this.clampToWorldBounds(this.boat.x + Math.cos(angle) * distance);
+      const y = this.clampToWorldBounds(this.boat.y + Math.sin(angle) * distance);
       this.spawnPratAt(x, y);
     }
   }
@@ -251,9 +284,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   private spawnInitialPrats(): void {
+    const min = -WORLD_SIZE + WORLD_MARGIN;
+    const max = WORLD_SIZE - WORLD_MARGIN;
     for (let index = 0; index < 40; index++) {
-      const x = Phaser.Math.Between(-2000, 2000);
-      const y = Phaser.Math.Between(-2000, 2000);
+      const x = Phaser.Math.Between(min, max);
+      const y = Phaser.Math.Between(min, max);
       this.spawnPratAt(x, y);
     }
   }

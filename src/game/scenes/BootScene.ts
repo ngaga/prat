@@ -18,6 +18,19 @@ export class BootScene extends Phaser.Scene {
     graphics.generateTexture("sea", 64, 64);
     graphics.destroy();
 
+    const cascadeGraphics = this.add.graphics();
+    cascadeGraphics.fillStyle(0x333333, 1);
+    cascadeGraphics.fillRect(0, 0, 64, 32);
+    cascadeGraphics.fillStyle(0x000000, 1);
+    for (let index = 0; index < 4; index++) {
+      const x = index * 16;
+      cascadeGraphics.fillRect(x, 0, 12, 4);
+      cascadeGraphics.fillRect(x + 4, 4, 4, 24);
+      cascadeGraphics.fillRect(x + 2, 24, 8, 4);
+    }
+    cascadeGraphics.generateTexture("cascade", 64, 32);
+    cascadeGraphics.destroy();
+
     const boatGraphics = this.add.graphics();
     boatGraphics.fillStyle(0x000000, 1);
     boatGraphics.fillTriangle(40, 0, 0, 30, 80, 30);

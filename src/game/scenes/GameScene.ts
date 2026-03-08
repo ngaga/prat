@@ -12,6 +12,24 @@ interface PratEntity {
 interface RemoteBoatData {
   sprite: Phaser.GameObjects.Image;
   nameLabel: Phaser.GameObjects.Text;
+  lifeBar?: Phaser.GameObjects.Graphics;
+}
+
+interface OctopusEntity {
+  id: string;
+  sprite: Phaser.GameObjects.Image;
+  lifeBar: Phaser.GameObjects.Graphics;
+  life: number;
+  lastShotTime: number;
+  spawnTime: number;
+}
+
+interface LetterProjectile {
+  text: Phaser.GameObjects.Text;
+  targetPlayerId: string | null;
+  targetOctopusId: string | null;
+  damage: number;
+  speed: number;
 }
 
 const WORLD_SIZE = 2000;
@@ -21,6 +39,18 @@ const PRAT_SPAWN_INTERVAL_MS = 800;
 const PRAT_SPAWN_RADIUS = 600;
 const MAX_PRATS = 80;
 const CAPTURE_FLASH_COLOR = 0x000000;
+const MAX_LIFE = 100;
+const MAX_MANA = 100;
+const SHOT_COST = 40;
+const MANA_REGEN_PER_SECOND = 8;
+const MANA_PER_PRAT_CAPTURE = 10;
+const LETTER_DAMAGE = 10;
+const LETTER_SPEED = 400;
+const PRAT_LETTERS = ["P", "R", "A", "T"];
+const OCTOPUS_COUNT = 5;
+const OCTOPUS_LIFE = 80;
+const OCTOPUS_LIFETIME_MS = 20000;
+const OCTOPUS_SHOOT_INTERVAL_MS = 3000;
 
 function shortId(uuid: string): string {
   return uuid.slice(0, 8);
@@ -47,6 +77,12 @@ export class GameScene extends Phaser.Scene {
   private borderBottom!: Phaser.GameObjects.TileSprite;
   private borderLeft!: Phaser.GameObjects.TileSprite;
   private borderRight!: Phaser.GameObjects.TileSprite;
+  private life = MAX_LIFE;
+  private mana = MAX_MANA;
+  private letterProjectiles: LetterProjectile[] = [];
+  private octopuses = new Map<string, OctopusEntity>();
+  private enemyProjectiles: LetterProjectile[] = [];
+  private nextOctopusId = 0;
 
   constructor() {
     super({ key: "GameScene" });
@@ -59,6 +95,7 @@ export class GameScene extends Phaser.Scene {
     this.sea.setOrigin(0.5);
 
     this.createWorldBorders();
+    this.spawnOctopuses();
 
     this.cursors = this.input.keyboard!.createCursorKeys();
 
@@ -68,6 +105,11 @@ export class GameScene extends Phaser.Scene {
         this.updateRemoteBoats(players);
       },
       onPratCaptured: () => {},
+      onPlayerHit: (payload) => {
+        if (payload.targetId === this.multiplayer.getPlayerId()) {
+          this.life = Math.max(0, this.life - payload.damage);
+        }
+      },
       onConnected: () => {
         if (!this.isSceneActive) return;
         this.updateMultiplayerStatus();
@@ -77,6 +119,7 @@ export class GameScene extends Phaser.Scene {
         y: this.boat.y,
         rotation: this.boat.rotation,
         score: this.score,
+        life: this.life,
       }),
     });
     this.multiplayer.connect();
@@ -154,7 +197,6 @@ export class GameScene extends Phaser.Scene {
     const manaY = this.scale.height - 35;
 
     this.lifeBar = this.add.graphics().setScrollFactor(0);
-    this.drawBar(this.lifeBar, x, lifeY, barWidth, barHeight, 0x333333, 0x00ff00, 1);
 
     this.manaBar = this.add.graphics().setScrollFactor(0);
     this.drawBar(this.manaBar, x, manaY, barWidth, barHeight, 0x333333, 0x0066ff, 1);
@@ -163,7 +205,7 @@ export class GameScene extends Phaser.Scene {
       .text(x, lifeY - 16, "Vie", { fontSize: "12px", color: "#000" })
       .setScrollFactor(0);
     this.add
-      .text(x, manaY - 16, "Magie", { fontSize: "12px", color: "#000" })
+      .text(x, manaY - 16, "Munitions", { fontSize: "12px", color: "#000" })
       .setScrollFactor(0);
   }
 
@@ -186,6 +228,19 @@ export class GameScene extends Phaser.Scene {
 
   shutdown(): void {
     this.isSceneActive = false;
+    for (const projectile of this.letterProjectiles) {
+      projectile.text.destroy();
+    }
+    this.letterProjectiles = [];
+    for (const projectile of this.enemyProjectiles) {
+      projectile.text.destroy();
+    }
+    this.enemyProjectiles = [];
+    for (const octopus of this.octopuses.values()) {
+      octopus.sprite.destroy();
+      octopus.lifeBar.destroy();
+    }
+    this.octopuses.clear();
     if (this.pratSpawnTimer) {
       clearInterval(this.pratSpawnTimer);
       this.pratSpawnTimer = null;
@@ -201,7 +256,7 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private updateRemoteBoats(players: Map<string, { id: string; x: number; y: number; rotation: number }>): void {
+  private updateRemoteBoats(players: Map<string, { id: string; x: number; y: number; rotation: number; life: number }>): void {
     if (!this.isSceneActive || !this.scene?.isActive?.() || !this.add) return;
     try {
       for (const [playerId, data] of players) {
@@ -212,6 +267,8 @@ export class GameScene extends Phaser.Scene {
           const sprite = this.add.image(data.x, data.y, "boat");
           sprite.setScale(0.5);
           sprite.setDepth(5);
+          sprite.setInteractive({ useHandCursor: true });
+          sprite.on("pointerdown", () => this.fireLettersAtTarget(playerId));
           const nameLabel = this.add
             .text(data.x, data.y - 50, shortId(playerId), {
               fontSize: "12px",
@@ -219,24 +276,99 @@ export class GameScene extends Phaser.Scene {
             })
             .setOrigin(0.5)
             .setDepth(6);
-          this.remoteBoats.set(playerId, { sprite, nameLabel });
-          boatData = { sprite, nameLabel };
+          const lifeBar = this.add.graphics().setDepth(7);
+          this.remoteBoats.set(playerId, { sprite, nameLabel, lifeBar });
+          boatData = { sprite, nameLabel, lifeBar };
         }
         boatData.sprite.setPosition(data.x, data.y);
         boatData.sprite.setRotation(data.rotation);
         boatData.nameLabel.setPosition(data.x, data.y - 50);
+        const lifeRatio = (data.life ?? MAX_LIFE) / MAX_LIFE;
+        boatData.lifeBar?.clear();
+        if (boatData.lifeBar) {
+          this.drawBar(boatData.lifeBar, data.x - 25, data.y - 65, 50, 6, 0x333333, 0xff0000, lifeRatio);
+        }
       }
       for (const playerId of this.remoteBoats.keys()) {
         if (!players.has(playerId)) {
           const data = this.remoteBoats.get(playerId);
           data?.sprite.destroy();
           data?.nameLabel.destroy();
+          data?.lifeBar?.destroy();
           this.remoteBoats.delete(playerId);
         }
       }
     } catch {
       // Scene may be destroyed, ignore
     }
+  }
+
+  private fireLettersAtTarget(targetPlayerId: string): void {
+    if (!this.remoteBoats.has(targetPlayerId)) return;
+    if (this.mana < SHOT_COST) return;
+
+    this.mana = Math.max(0, this.mana - SHOT_COST);
+
+    const startX = this.boat.x;
+    const startY = this.boat.y;
+
+    PRAT_LETTERS.forEach((letter, index) => {
+      this.time.delayedCall(index * 80, () => {
+        if (!this.isSceneActive) return;
+        const text = this.add.text(startX, startY, letter, {
+          fontSize: "28px",
+          fontStyle: "bold",
+          color: "#000000",
+        });
+        text.setOrigin(0.5);
+        text.setDepth(8);
+
+        this.letterProjectiles.push({
+          text,
+          targetPlayerId,
+          targetOctopusId: null,
+          damage: LETTER_DAMAGE,
+          speed: LETTER_SPEED,
+        });
+      });
+    });
+  }
+
+  private spawnOctopuses(): void {
+    for (let index = 0; index < OCTOPUS_COUNT; index++) {
+      this.spawnSingleOctopus();
+    }
+  }
+
+  private fireLettersAtOctopus(octopusId: string): void {
+    if (!this.octopuses.has(octopusId)) return;
+    if (this.mana < SHOT_COST) return;
+
+    this.mana = Math.max(0, this.mana - SHOT_COST);
+
+    const startX = this.boat.x;
+    const startY = this.boat.y;
+
+    PRAT_LETTERS.forEach((letter, index) => {
+      this.time.delayedCall(index * 80, () => {
+        if (!this.isSceneActive) return;
+        const text = this.add.text(startX, startY, letter, {
+          fontSize: "28px",
+          fontStyle: "bold",
+          color: "#000000",
+        });
+        text.setOrigin(0.5);
+        text.setDepth(8);
+
+        this.letterProjectiles.push({
+          text,
+          targetPlayerId: null,
+          targetOctopusId: octopusId,
+          damage: LETTER_DAMAGE,
+          speed: LETTER_SPEED,
+        });
+      });
+    });
   }
 
   private clampToWorldBounds(value: number): number {
@@ -307,6 +439,18 @@ export class GameScene extends Phaser.Scene {
     this.sea.tilePositionX = this.boat.x;
     this.sea.tilePositionY = this.boat.y;
 
+    const barWidth = 200;
+    const barHeight = 14;
+    const lifeY = this.scale.height - 55;
+    const manaY = this.scale.height - 35;
+    this.mana = Math.min(MAX_MANA, this.mana + (MANA_REGEN_PER_SECOND * this.game.loop.delta) / 1000);
+    this.drawBar(this.lifeBar, 20, lifeY, barWidth, barHeight, 0x333333, 0x00ff00, this.life / MAX_LIFE);
+    this.drawBar(this.manaBar, 20, manaY, barWidth, barHeight, 0x333333, 0x0066ff, this.mana / MAX_MANA);
+
+    this.updateLetterProjectiles();
+    this.updateEnemyProjectiles();
+    this.updateOctopuses();
+
     let velocityX = 0;
     let velocityY = 0;
 
@@ -322,6 +466,190 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.checkPratCapture();
+  }
+
+  private getProjectileTargetPosition(projectile: LetterProjectile): { x: number; y: number } | null {
+    if (projectile.targetPlayerId) {
+      const targetBoat = this.remoteBoats.get(projectile.targetPlayerId);
+      return targetBoat ? { x: targetBoat.sprite.x, y: targetBoat.sprite.y } : null;
+    }
+    if (projectile.targetOctopusId) {
+      const octopus = this.octopuses.get(projectile.targetOctopusId);
+      return octopus ? { x: octopus.sprite.x, y: octopus.sprite.y } : null;
+    }
+    return null;
+  }
+
+  private updateLetterProjectiles(): void {
+    const hitThreshold = 40;
+    for (let index = this.letterProjectiles.length - 1; index >= 0; index--) {
+      const projectile = this.letterProjectiles[index];
+      const target = this.getProjectileTargetPosition(projectile);
+      if (!target) {
+        projectile.text.destroy();
+        this.letterProjectiles.splice(index, 1);
+        continue;
+      }
+      const angle = Phaser.Math.Angle.Between(
+        projectile.text.x,
+        projectile.text.y,
+        target.x,
+        target.y
+      );
+      const distance = Phaser.Math.Distance.Between(
+        projectile.text.x,
+        projectile.text.y,
+        target.x,
+        target.y
+      );
+      if (distance < hitThreshold) {
+        if (projectile.targetPlayerId) {
+          this.multiplayer.broadcastPlayerHit(projectile.targetPlayerId, projectile.damage);
+        } else if (projectile.targetOctopusId) {
+          const octopus = this.octopuses.get(projectile.targetOctopusId!);
+          if (octopus) {
+            octopus.life -= projectile.damage;
+            if (octopus.life <= 0) {
+              octopus.sprite.destroy();
+              octopus.lifeBar.destroy();
+              this.octopuses.delete(projectile.targetOctopusId!);
+            }
+          }
+        }
+        const flash = this.add.circle(target.x, target.y, 30, CAPTURE_FLASH_COLOR, 0.5);
+        flash.setDepth(4);
+        this.tweens.add({
+          targets: flash,
+          alpha: 0,
+          scale: 2,
+          duration: 200,
+          onComplete: () => flash.destroy(),
+        });
+        projectile.text.destroy();
+        this.letterProjectiles.splice(index, 1);
+      } else {
+        const speed = (projectile.speed * this.game.loop.delta) / 1000;
+        projectile.text.x += Math.cos(angle) * speed;
+        projectile.text.y += Math.sin(angle) * speed;
+      }
+    }
+  }
+
+  private updateEnemyProjectiles(): void {
+    const hitThreshold = 40;
+    for (let index = this.enemyProjectiles.length - 1; index >= 0; index--) {
+      const projectile = this.enemyProjectiles[index];
+      const targetX = this.boat.x;
+      const targetY = this.boat.y;
+      const angle = Phaser.Math.Angle.Between(
+        projectile.text.x,
+        projectile.text.y,
+        targetX,
+        targetY
+      );
+      const distance = Phaser.Math.Distance.Between(
+        projectile.text.x,
+        projectile.text.y,
+        targetX,
+        targetY
+      );
+      if (distance < hitThreshold) {
+        this.life = Math.max(0, this.life - projectile.damage);
+        const flash = this.add.circle(targetX, targetY, 30, CAPTURE_FLASH_COLOR, 0.5);
+        flash.setDepth(4);
+        this.tweens.add({
+          targets: flash,
+          alpha: 0,
+          scale: 2,
+          duration: 200,
+          onComplete: () => flash.destroy(),
+        });
+        projectile.text.destroy();
+        this.enemyProjectiles.splice(index, 1);
+      } else {
+        const speed = (projectile.speed * this.game.loop.delta) / 1000;
+        projectile.text.x += Math.cos(angle) * speed;
+        projectile.text.y += Math.sin(angle) * speed;
+      }
+    }
+  }
+
+  private spawnSingleOctopus(): void {
+    const id = `octopus-${this.nextOctopusId++}`;
+    const min = -WORLD_SIZE + WORLD_MARGIN + 100;
+    const max = WORLD_SIZE - WORLD_MARGIN - 100;
+    const x = Phaser.Math.Between(min, max);
+    const y = Phaser.Math.Between(min, max);
+    const sprite = this.add.image(x, y, "octopus");
+    sprite.setScale(0.8);
+    sprite.setDepth(5);
+    sprite.setInteractive({ useHandCursor: true });
+    sprite.on("pointerdown", () => this.fireLettersAtOctopus(id));
+    const lifeBar = this.add.graphics().setDepth(7);
+    this.octopuses.set(id, {
+      id,
+      sprite,
+      lifeBar,
+      life: OCTOPUS_LIFE,
+      lastShotTime: 0,
+      spawnTime: Date.now(),
+    });
+  }
+
+  private updateOctopuses(): void {
+    const now = Date.now();
+    const toRemove: string[] = [];
+
+    for (const octopus of this.octopuses.values()) {
+      if (now - octopus.spawnTime >= OCTOPUS_LIFETIME_MS) {
+        toRemove.push(octopus.id);
+        continue;
+      }
+      const lifeRatio = octopus.life / OCTOPUS_LIFE;
+      octopus.lifeBar.clear();
+      this.drawBar(octopus.lifeBar, octopus.sprite.x - 25, octopus.sprite.y - 50, 50, 6, 0x333333, 0xff0000, lifeRatio);
+
+      if (now - octopus.lastShotTime >= OCTOPUS_SHOOT_INTERVAL_MS) {
+        octopus.lastShotTime = now;
+        this.octopusShoot(octopus);
+      }
+    }
+
+    for (const id of toRemove) {
+      const octopus = this.octopuses.get(id);
+      if (octopus) {
+        octopus.sprite.destroy();
+        octopus.lifeBar.destroy();
+        this.octopuses.delete(id);
+        this.spawnSingleOctopus();
+      }
+    }
+  }
+
+  private octopusShoot(octopus: OctopusEntity): void {
+    const startX = octopus.sprite.x;
+    const startY = octopus.sprite.y;
+
+    PRAT_LETTERS.forEach((letter, index) => {
+      this.time.delayedCall(index * 80, () => {
+        if (!this.isSceneActive || !this.octopuses.has(octopus.id)) return;
+        const text = this.add.text(startX, startY, letter, {
+          fontSize: "24px",
+          fontStyle: "bold",
+          color: "#000000",
+        });
+        text.setOrigin(0.5);
+        text.setDepth(8);
+
+        this.enemyProjectiles.push({
+          text,
+          targetPlayerId: null,
+          targetOctopusId: null,
+          damage: LETTER_DAMAGE,
+          speed: LETTER_SPEED * 0.8,
+        });
+      });
+    });
   }
 
   private checkPratCapture(): void {
@@ -341,6 +669,7 @@ export class GameScene extends Phaser.Scene {
       if (distance < this.captureRadius) {
         entity.captured = true;
         this.score += entity.power;
+        this.mana = Math.min(MAX_MANA, this.mana + MANA_PER_PRAT_CAPTURE);
         this.scoreText.setText(`Prat capturés: ${this.score}`);
 
         const flash = this.add.circle(entity.text.x, entity.text.y, 60, CAPTURE_FLASH_COLOR, 0.5);

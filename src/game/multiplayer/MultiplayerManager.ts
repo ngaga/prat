@@ -10,6 +10,7 @@ export interface RemotePlayer {
   y: number;
   rotation: number;
   score: number;
+  life: number;
   color: number;
 }
 
@@ -19,11 +20,18 @@ export interface PratCapturePayload {
   score: number;
 }
 
+export interface PlayerHitPayload {
+  attackerId: string;
+  targetId: string;
+  damage: number;
+}
+
 export interface MultiplayerCallbacks {
   onRemotePlayerUpdate: (players: Map<string, RemotePlayer>) => void;
   onPratCaptured: (pratIndex: number, playerId: string) => void;
+  onPlayerHit?: (payload: PlayerHitPayload) => void;
   onConnected?: () => void;
-  getLocalState: () => { x: number; y: number; rotation: number; score: number };
+  getLocalState: () => { x: number; y: number; rotation: number; score: number; life: number };
 }
 
 function generatePlayerId(): string {
@@ -92,7 +100,7 @@ export class MultiplayerManager {
 
     this.channel
       .on("broadcast", { event: "player-position" }, (payload) => {
-        const { playerId, x, y, rotation, score } = payload.payload;
+        const { playerId, x, y, rotation, score, life } = payload.payload;
         if (playerId === this.playerId) return;
         const existing = this.remotePlayers.get(playerId);
         const color = existing?.color ?? hashToColor(playerId);
@@ -102,6 +110,7 @@ export class MultiplayerManager {
           y,
           rotation,
           score: score ?? existing?.score ?? 0,
+          life: life ?? existing?.life ?? 100,
           color,
         });
         this.callbacks.onRemotePlayerUpdate(this.getRemotePlayers());
@@ -116,6 +125,7 @@ export class MultiplayerManager {
           y,
           rotation,
           score: score ?? 0,
+          life: 100,
           color,
         });
         this.callbacks.onRemotePlayerUpdate(this.getRemotePlayers());
@@ -124,6 +134,10 @@ export class MultiplayerManager {
         const { playerId } = payload.payload;
         this.remotePlayers.delete(playerId);
         this.callbacks.onRemotePlayerUpdate(this.getRemotePlayers());
+      })
+      .on("broadcast", { event: "player-hit" }, (payload) => {
+        const data = payload.payload as PlayerHitPayload;
+        this.callbacks.onPlayerHit?.(data);
       })
       .on("broadcast", { event: "prat-capture" }, (payload) => {
         const { pratIndex, playerId } = payload.payload as PratCapturePayload;
@@ -153,11 +167,12 @@ export class MultiplayerManager {
         playerId: this.playerId,
         ...this.lastPosition,
         score: 0,
+        life: 100,
       },
     });
   }
 
-  broadcastPosition(x: number, y: number, rotation: number, score: number): void {
+  broadcastPosition(x: number, y: number, rotation: number, score: number, life: number): void {
     this.lastPosition = { x, y, rotation };
     this.channel?.send({
       type: "broadcast",
@@ -168,6 +183,19 @@ export class MultiplayerManager {
         y,
         rotation,
         score,
+        life,
+      },
+    });
+  }
+
+  broadcastPlayerHit(targetId: string, damage: number): void {
+    this.channel?.send({
+      type: "broadcast",
+      event: "player-hit",
+      payload: {
+        attackerId: this.playerId,
+        targetId,
+        damage,
       },
     });
   }
@@ -189,7 +217,7 @@ export class MultiplayerManager {
       if (this.isConnected) {
         const state = this.callbacks.getLocalState();
         this.lastPosition = { x: state.x, y: state.y, rotation: state.rotation };
-        this.broadcastPosition(state.x, state.y, state.rotation, state.score);
+        this.broadcastPosition(state.x, state.y, state.rotation, state.score, state.life);
       }
     }, POSITION_BROADCAST_INTERVAL_MS);
   }

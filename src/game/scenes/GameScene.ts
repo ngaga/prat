@@ -78,7 +78,9 @@ function normalizeDirection(
 export class GameScene extends Phaser.Scene {
   private boat!: Phaser.Physics.Arcade.Sprite;
   private boatNameLabel!: Phaser.GameObjects.Text;
-  private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
+  private moveTargetX: number | null = null;
+  private moveTargetY: number | null = null;
+  private readonly moveArrivalThreshold = 15;
   private pratEntities: PratEntity[] = [];
   private score: number = 0;
   private scoreText!: Phaser.GameObjects.Text;
@@ -116,7 +118,8 @@ export class GameScene extends Phaser.Scene {
     this.createWorldBorders();
     this.spawnOctopuses();
 
-    this.cursors = this.input.keyboard!.createCursorKeys();
+    this.input.on("pointerdown", this.onPointerDown, this);
+    this.game.canvas.addEventListener("contextmenu", (event) => event.preventDefault());
 
     this.multiplayer = new MultiplayerManager({
       onRemotePlayerUpdate: (players) => {
@@ -249,6 +252,7 @@ export class GameScene extends Phaser.Scene {
 
   shutdown(): void {
     this.isSceneActive = false;
+    this.input.off("pointerdown", this.onPointerDown, this);
     this.scale.off("resize", this.updateCameraZoom, this);
     for (const projectile of this.letterProjectiles) {
       projectile.text.destroy();
@@ -290,7 +294,9 @@ export class GameScene extends Phaser.Scene {
           sprite.setScale(0.5);
           sprite.setDepth(5);
           sprite.setInteractive({ useHandCursor: true });
-          sprite.on("pointerdown", () => this.fireLettersAtTarget(playerId));
+          sprite.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
+            if (pointer.button === 0) this.fireLettersAtTarget(playerId);
+          });
           const nameLabel = this.add
             .text(data.x, data.y - 50, shortId(playerId), {
               fontSize: "12px",
@@ -416,6 +422,48 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  private onPointerDown(pointer: Phaser.Input.Pointer): void {
+    if (pointer.button !== 2) return;
+    const worldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+    this.moveTargetX = this.clampToWorldBounds(worldPoint.x);
+    this.moveTargetY = this.clampToWorldBounds(worldPoint.y);
+  }
+
+  private updateBoatMovement(): void {
+    if (this.moveTargetX === null || this.moveTargetY === null) {
+      this.boat.setVelocity(0, 0);
+      return;
+    }
+    const distance = Phaser.Math.Distance.Between(
+      this.boat.x,
+      this.boat.y,
+      this.moveTargetX,
+      this.moveTargetY
+    );
+    if (distance < this.moveArrivalThreshold) {
+      this.moveTargetX = null;
+      this.moveTargetY = null;
+      this.boat.setVelocity(0, 0);
+      return;
+    }
+    const direction = normalizeDirection(
+      this.boat.x,
+      this.boat.y,
+      this.moveTargetX,
+      this.moveTargetY
+    );
+    this.boat.setVelocity(
+      direction.x * this.boatSpeed,
+      direction.y * this.boatSpeed
+    );
+    this.boat.rotation = Phaser.Math.Angle.Between(
+      this.boat.x,
+      this.boat.y,
+      this.moveTargetX,
+      this.moveTargetY
+    );
+  }
+
   private clampToWorldBounds(value: number): number {
     return Phaser.Math.Clamp(value, -WORLD_SIZE + WORLD_MARGIN, WORLD_SIZE - WORLD_MARGIN);
   }
@@ -495,20 +543,7 @@ export class GameScene extends Phaser.Scene {
     this.updateLetterProjectiles();
     this.updateEnemyProjectiles();
     this.updateOctopuses();
-
-    let velocityX = 0;
-    let velocityY = 0;
-
-    if (this.cursors.left.isDown) velocityX = -this.boatSpeed;
-    if (this.cursors.right.isDown) velocityX = this.boatSpeed;
-    if (this.cursors.up.isDown) velocityY = -this.boatSpeed;
-    if (this.cursors.down.isDown) velocityY = this.boatSpeed;
-
-    this.boat.setVelocity(velocityX, velocityY);
-
-    if (velocityX !== 0 || velocityY !== 0) {
-      this.boat.rotation = Phaser.Math.Angle.Between(0, 0, velocityX, velocityY);
-    }
+    this.updateBoatMovement();
 
     this.checkPratCapture();
   }
@@ -668,7 +703,9 @@ export class GameScene extends Phaser.Scene {
     sprite.setScale(0.8);
     sprite.setDepth(5);
     sprite.setInteractive({ useHandCursor: true });
-    sprite.on("pointerdown", () => this.fireLettersAtOctopus(id));
+    sprite.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
+      if (pointer.button === 0) this.fireLettersAtOctopus(id);
+    });
     const lifeBar = this.add.graphics().setDepth(7);
     this.octopuses.set(id, {
       id,

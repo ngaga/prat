@@ -107,9 +107,14 @@ export class GameScene extends Phaser.Scene {
   private octopuses = new Map<string, OctopusEntity>();
   private enemyProjectiles: LetterProjectile[] = [];
   private nextOctopusId = 0;
+  private octopusesEnabled = true;
 
   constructor() {
     super({ key: "GameScene" });
+  }
+
+  init(data: { octopusesEnabled?: boolean }): void {
+    this.octopusesEnabled = data?.octopusesEnabled ?? true;
   }
 
   create(): void {
@@ -119,7 +124,9 @@ export class GameScene extends Phaser.Scene {
     this.sea.setOrigin(0.5);
 
     this.createWorldBorders();
-    this.spawnOctopuses();
+    if (this.octopusesEnabled) {
+      this.spawnOctopuses();
+    }
 
     this.input.on("pointerdown", this.onPointerDown, this);
     this.game.canvas.addEventListener("contextmenu", (event) => event.preventDefault());
@@ -589,7 +596,9 @@ export class GameScene extends Phaser.Scene {
     this.updateLetterProjectiles();
     this.updateRemoteProjectiles();
     this.updateEnemyProjectiles();
-    this.updateOctopuses();
+    if (this.octopusesEnabled) {
+      this.updateOctopuses();
+    }
     this.updateBoatMovement();
 
     this.checkPratCapture();

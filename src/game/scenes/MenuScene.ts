@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { isOctopusesEnabled } from "@/lib/featureFlags";
 
 export class MenuScene extends Phaser.Scene {
   constructor() {
@@ -46,9 +47,10 @@ export class MenuScene extends Phaser.Scene {
     });
   }
 
-  private startGame(): void {
+  private async startGame(): Promise<void> {
     this.playBackgroundMusic();
-    this.scene.start("GameScene");
+    const octopusesEnabled = await isOctopusesEnabled();
+    this.scene.start("GameScene", { octopusesEnabled });
   }
 
   private playBackgroundMusic(): void {

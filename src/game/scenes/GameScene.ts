@@ -56,8 +56,7 @@ const OCTOPUS_COUNT = 5;
 const OCTOPUS_LIFE = 80;
 const OCTOPUS_LIFETIME_MS = 20000;
 const OCTOPUS_SHOOT_INTERVAL_MS = 3000;
-const PROJECTILE_MAX_RANGE = Math.min(VIEW_WIDTH, VIEW_HEIGHT) / 2;
-
+const PROJECTILE_MAX_RANGE = Math.sqrt(VIEW_WIDTH ** 2 + VIEW_HEIGHT ** 2) / 2;
 function shortId(uuid: string): string {
   return uuid.slice(0, 8);
 }

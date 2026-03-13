@@ -301,7 +301,12 @@ export class GameScene extends Phaser.Scene {
   }
 
   private updateRemoteBoats(players: Map<string, { id: string; x: number; y: number; rotation: number; life: number }>): void {
-    if (!this.isSceneActive || !this.scene?.isActive?.() || !this.add) return;
+    if (!this.isSceneActive || !this.add) return;
+    try {
+      if (this.scene == null || !this.scene.isActive()) return;
+    } catch {
+      return;
+    }
     try {
       for (const [playerId, data] of players) {
         if (data.x == null || data.y == null) continue;

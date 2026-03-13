@@ -2,7 +2,7 @@ import type { RealtimeChannel } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase";
 
 const CHANNEL_NAME = "prat-game";
-const POSITION_BROADCAST_INTERVAL_MS = 100;
+const POSITION_BROADCAST_INTERVAL_MS = 33;
 
 export interface RemotePlayer {
   id: string;

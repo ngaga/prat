@@ -31,22 +31,17 @@ export class BootScene extends Phaser.Scene {
     cascadeGraphics.generateTexture("cascade", 64, 32);
     cascadeGraphics.destroy();
 
-    const octopusGraphics = this.add.graphics();
-    octopusGraphics.fillStyle(0x333333, 1);
-    octopusGraphics.fillCircle(32, 32, 28);
-    octopusGraphics.fillStyle(0x000000, 1);
-    octopusGraphics.lineStyle(4, 0x000000, 1);
-    for (let index = 0; index < 8; index++) {
-      const angle = (index / 8) * Math.PI * 2 - Math.PI / 2;
-      const tipX = 32 + Math.cos(angle) * 45;
-      const tipY = 32 + Math.sin(angle) * 45;
-      octopusGraphics.lineBetween(32 + Math.cos(angle) * 20, 32 + Math.sin(angle) * 20, tipX, tipY);
-    }
-    octopusGraphics.fillStyle(0x000000, 1);
-    octopusGraphics.fillCircle(32, 24, 6);
-    octopusGraphics.fillCircle(38, 26, 5);
-    octopusGraphics.generateTexture("octopus", 64, 64);
-    octopusGraphics.destroy();
+    const octopusText = this.add.text(0, 0, "P", {
+      fontSize: "48px",
+      color: "#333333",
+      fontFamily: "sans-serif",
+    });
+    octopusText.setOrigin(0.5, 0.5);
+    const octopusRenderTexture = this.add.renderTexture(0, 0, 64, 64);
+    octopusRenderTexture.draw(octopusText, 32, 32);
+    octopusRenderTexture.saveTexture("octopus");
+    octopusText.destroy();
+    octopusRenderTexture.destroy();
 
     const boatGraphics = this.add.graphics();
     boatGraphics.fillStyle(0x000000, 1);

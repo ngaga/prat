@@ -55,10 +55,12 @@ const MANA_PER_PRAT_CAPTURE = 10;
 const LETTER_DAMAGE = 10;
 const LETTER_SPEED = 400;
 const PRAT_LETTERS = ["P", "R", "A", "T"];
-const OCTOPUS_COUNT = 5;
 const OCTOPUS_LIFE = 80;
 const OCTOPUS_LIFETIME_MS = 20000;
+const OCTOPUS_SHOOT_DELAY_MS = 5000;
 const OCTOPUS_SHOOT_INTERVAL_MS = 3000;
+const OCTOPUS_SPAWN_CHECK_INTERVAL_MS = 3000;
+const OCTOPUS_SPAWN_PROBABILITY = 1 / 3;
 const PROJECTILE_MAX_RANGE = Math.sqrt(VIEW_WIDTH ** 2 + VIEW_HEIGHT ** 2) / 2;
 function shortId(uuid: string): string {
   return uuid.slice(0, 8);
@@ -108,6 +110,7 @@ export class GameScene extends Phaser.Scene {
   private enemyProjectiles: LetterProjectile[] = [];
   private nextOctopusId = 0;
   private octopusesEnabled = true;
+  private lastOctopusSpawnCheckTime = 0;
 
   constructor() {
     super({ key: "GameScene" });
@@ -125,7 +128,7 @@ export class GameScene extends Phaser.Scene {
 
     this.createWorldBorders();
     if (this.octopusesEnabled) {
-      this.spawnOctopuses();
+      this.lastOctopusSpawnCheckTime = Date.now();
     }
 
     this.input.on("pointerdown", this.onPointerDown, this);
@@ -456,12 +459,6 @@ export class GameScene extends Phaser.Scene {
     });
 
     this.multiplayer.broadcastPlayerShot("", startX, startY, direction.x, direction.y);
-  }
-
-  private spawnOctopuses(): void {
-    for (let index = 0; index < OCTOPUS_COUNT; index++) {
-      this.spawnSingleOctopus();
-    }
   }
 
   private fireLettersAtOctopus(octopusId: string): void {
@@ -915,36 +912,73 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  private countOctopusesInVisibleArea(): number {
+    const bounds = this.getVisibleBounds();
+    let count = 0;
+    for (const octopus of this.octopuses.values()) {
+      if (
+        octopus.sprite.x >= bounds.left &&
+        octopus.sprite.x <= bounds.right &&
+        octopus.sprite.y >= bounds.top &&
+        octopus.sprite.y <= bounds.bottom
+      ) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  private removeOctopus(octopusId: string): void {
+    const octopus = this.octopuses.get(octopusId);
+    if (octopus) {
+      octopus.sprite.destroy();
+      octopus.lifeBar.destroy();
+      this.octopuses.delete(octopusId);
+    }
+  }
+
   private updateOctopuses(): void {
     const now = Date.now();
+    const bounds = this.getVisibleBounds();
     const toRemove: string[] = [];
 
     for (const octopus of this.octopuses.values()) {
-      if (now - octopus.spawnTime >= OCTOPUS_LIFETIME_MS) {
+      const inView =
+        octopus.sprite.x >= bounds.left &&
+        octopus.sprite.x <= bounds.right &&
+        octopus.sprite.y >= bounds.top &&
+        octopus.sprite.y <= bounds.bottom;
+
+      if (!inView || now - octopus.spawnTime >= OCTOPUS_LIFETIME_MS) {
         toRemove.push(octopus.id);
         continue;
       }
+
       const lifeRatio = octopus.life / OCTOPUS_LIFE;
       octopus.lifeBar.clear();
       this.drawBar(octopus.lifeBar, octopus.sprite.x - 25, octopus.sprite.y - 50, 50, 6, 0x333333, 0xff0000, lifeRatio);
 
-      if (
-        this.isPlayerVisibleToOctopus(octopus) &&
-        now - octopus.lastShotTime >= OCTOPUS_SHOOT_INTERVAL_MS
-      ) {
+      const canShoot =
+        now - octopus.spawnTime >= OCTOPUS_SHOOT_DELAY_MS &&
+        now - octopus.lastShotTime >= OCTOPUS_SHOOT_INTERVAL_MS;
+      if (canShoot) {
         octopus.lastShotTime = now;
         this.octopusShoot(octopus);
       }
     }
 
     for (const id of toRemove) {
-      const octopus = this.octopuses.get(id);
-      if (octopus) {
-        octopus.sprite.destroy();
-        octopus.lifeBar.destroy();
-        this.octopuses.delete(id);
-        this.spawnSingleOctopus();
-      }
+      this.removeOctopus(id);
+    }
+
+    const visibleCount = this.countOctopusesInVisibleArea();
+    if (
+      visibleCount === 0 &&
+      now - this.lastOctopusSpawnCheckTime >= OCTOPUS_SPAWN_CHECK_INTERVAL_MS &&
+      Math.random() < OCTOPUS_SPAWN_PROBABILITY
+    ) {
+      this.lastOctopusSpawnCheckTime = now;
+      this.spawnSingleOctopus();
     }
   }
 

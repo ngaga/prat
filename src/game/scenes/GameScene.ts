@@ -243,7 +243,7 @@ export class GameScene extends Phaser.Scene {
       .text(x, lifeY - 16, "Vie", { fontSize: "12px", color: "#000" })
       .setScrollFactor(0);
     this.add
-      .text(x, manaY - 16, "Munitions", { fontSize: "12px", color: "#000" })
+      .text(x, manaY - 16, "Magie", { fontSize: "12px", color: "#000" })
       .setScrollFactor(0);
   }
 
@@ -317,9 +317,6 @@ export class GameScene extends Phaser.Scene {
           sprite.setScale(0.5);
           sprite.setDepth(5);
           sprite.setInteractive({ useHandCursor: true });
-          sprite.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
-            if (pointer.button === 0) this.fireLettersAtTarget(playerId);
-          });
           const nameLabel = this.add
             .text(data.x, data.y - 50, shortId(playerId), {
               fontSize: "12px",
@@ -357,9 +354,6 @@ export class GameScene extends Phaser.Scene {
   private fireLettersAtTarget(targetPlayerId: string): void {
     const targetBoat = this.remoteBoats.get(targetPlayerId);
     if (!targetBoat) return;
-    if (this.mana < SHOT_COST) return;
-
-    this.mana = Math.max(0, this.mana - SHOT_COST);
 
     const startX = this.boat.x;
     const startY = this.boat.y;
@@ -418,7 +412,7 @@ export class GameScene extends Phaser.Scene {
 
         this.remoteProjectiles.push({
           text,
-          targetPlayerId: payload.targetId,
+          targetPlayerId: payload.targetId || null,
           targetOctopusId: null,
           damage: LETTER_DAMAGE,
           speed: LETTER_SPEED,
@@ -431,6 +425,39 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  private fireLettersAtPosition(worldX: number, worldY: number): void {
+    const startX = this.boat.x;
+    const startY = this.boat.y;
+    const direction = normalizeDirection(startX, startY, worldX, worldY);
+
+    PRAT_LETTERS.forEach((letter, index) => {
+      this.time.delayedCall(index * 80, () => {
+        if (!this.isSceneActive) return;
+        const text = this.add.text(startX, startY, letter, {
+          fontSize: "28px",
+          fontStyle: "bold",
+          color: "#000000",
+        });
+        text.setOrigin(0.5);
+        text.setDepth(8);
+
+        this.letterProjectiles.push({
+          text,
+          targetPlayerId: null,
+          targetOctopusId: null,
+          damage: LETTER_DAMAGE,
+          speed: LETTER_SPEED,
+          directionX: direction.x,
+          directionY: direction.y,
+          originX: startX,
+          originY: startY,
+        });
+      });
+    });
+
+    this.multiplayer.broadcastPlayerShot("", startX, startY, direction.x, direction.y);
+  }
+
   private spawnOctopuses(): void {
     for (let index = 0; index < OCTOPUS_COUNT; index++) {
       this.spawnSingleOctopus();
@@ -439,9 +466,6 @@ export class GameScene extends Phaser.Scene {
 
   private fireLettersAtOctopus(octopusId: string): void {
     if (!this.octopuses.has(octopusId)) return;
-    if (this.mana < SHOT_COST) return;
-
-    this.mana = Math.max(0, this.mana - SHOT_COST);
 
     const startX = this.boat.x;
     const startY = this.boat.y;
@@ -481,10 +505,34 @@ export class GameScene extends Phaser.Scene {
   }
 
   private onPointerDown(pointer: Phaser.Input.Pointer): void {
-    if (pointer.button !== 2) return;
     const worldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
-    this.moveTargetX = this.clampToWorldBounds(worldPoint.x);
-    this.moveTargetY = this.clampToWorldBounds(worldPoint.y);
+    if (pointer.button === 2) {
+      this.moveTargetX = this.clampToWorldBounds(worldPoint.x);
+      this.moveTargetY = this.clampToWorldBounds(worldPoint.y);
+      return;
+    }
+    if (pointer.button === 0) {
+      this.handleLeftClick(worldPoint.x, worldPoint.y);
+    }
+  }
+
+  private handleLeftClick(worldX: number, worldY: number): void {
+    const clickRadius = 60;
+    for (const [playerId, boatData] of this.remoteBoats) {
+      const distance = Phaser.Math.Distance.Between(worldX, worldY, boatData.sprite.x, boatData.sprite.y);
+      if (distance < clickRadius) {
+        this.fireLettersAtTarget(playerId);
+        return;
+      }
+    }
+    for (const [octopusId, octopus] of this.octopuses) {
+      const distance = Phaser.Math.Distance.Between(worldX, worldY, octopus.sprite.x, octopus.sprite.y);
+      if (distance < clickRadius) {
+        this.fireLettersAtOctopus(octopusId);
+        return;
+      }
+    }
+    this.fireLettersAtPosition(worldX, worldY);
   }
 
   private updateBoatMovement(): void {
@@ -637,6 +685,7 @@ export class GameScene extends Phaser.Scene {
         continue;
       }
       const target = this.getProjectileTargetPosition(projectile);
+      let hitTarget: { x: number; y: number; playerId?: string; octopusId?: string } | null = null;
       if (target) {
         const distanceToTarget = Phaser.Math.Distance.Between(
           projectile.text.x,
@@ -645,32 +694,67 @@ export class GameScene extends Phaser.Scene {
           target.y
         );
         if (distanceToTarget < hitThreshold) {
-          if (projectile.targetPlayerId) {
-            this.multiplayer.broadcastPlayerHit(projectile.targetPlayerId, projectile.damage);
-          } else if (projectile.targetOctopusId) {
-            const octopus = this.octopuses.get(projectile.targetOctopusId!);
-            if (octopus) {
-              octopus.life -= projectile.damage;
-              if (octopus.life <= 0) {
-                octopus.sprite.destroy();
-                octopus.lifeBar.destroy();
-                this.octopuses.delete(projectile.targetOctopusId!);
-              }
+          hitTarget = {
+            x: target.x,
+            y: target.y,
+            playerId: projectile.targetPlayerId ?? undefined,
+            octopusId: projectile.targetOctopusId ?? undefined,
+          };
+        }
+      } else {
+        for (const [playerId, boatData] of this.remoteBoats) {
+          const distance = Phaser.Math.Distance.Between(
+            projectile.text.x,
+            projectile.text.y,
+            boatData.sprite.x,
+            boatData.sprite.y
+          );
+          if (distance < hitThreshold) {
+            hitTarget = { x: boatData.sprite.x, y: boatData.sprite.y, playerId };
+            break;
+          }
+        }
+        if (!hitTarget) {
+          for (const [octopusId, octopus] of this.octopuses) {
+            const distance = Phaser.Math.Distance.Between(
+              projectile.text.x,
+              projectile.text.y,
+              octopus.sprite.x,
+              octopus.sprite.y
+            );
+            if (distance < hitThreshold) {
+              hitTarget = { x: octopus.sprite.x, y: octopus.sprite.y, octopusId };
+              break;
             }
           }
-          const flash = this.add.circle(target.x, target.y, 30, CAPTURE_FLASH_COLOR, 0.5);
-          flash.setDepth(4);
-          this.tweens.add({
-            targets: flash,
-            alpha: 0,
-            scale: 2,
-            duration: 200,
-            onComplete: () => flash.destroy(),
-          });
-          projectile.text.destroy();
-          this.letterProjectiles.splice(index, 1);
-          continue;
         }
+      }
+      if (hitTarget) {
+        if (hitTarget.playerId) {
+          this.multiplayer.broadcastPlayerHit(hitTarget.playerId, projectile.damage);
+        } else if (hitTarget.octopusId) {
+          const octopus = this.octopuses.get(hitTarget.octopusId);
+          if (octopus) {
+            octopus.life -= projectile.damage;
+            if (octopus.life <= 0) {
+              octopus.sprite.destroy();
+              octopus.lifeBar.destroy();
+              this.octopuses.delete(hitTarget.octopusId);
+            }
+          }
+        }
+        const flash = this.add.circle(hitTarget.x, hitTarget.y, 30, CAPTURE_FLASH_COLOR, 0.5);
+        flash.setDepth(4);
+        this.tweens.add({
+          targets: flash,
+          alpha: 0,
+          scale: 2,
+          duration: 200,
+          onComplete: () => flash.destroy(),
+        });
+        projectile.text.destroy();
+        this.letterProjectiles.splice(index, 1);
+        continue;
       }
       const speed = (projectile.speed * this.game.loop.delta) / 1000;
       projectile.text.x += projectile.directionX * speed;
@@ -819,9 +903,7 @@ export class GameScene extends Phaser.Scene {
     sprite.setScale(0.8);
     sprite.setDepth(5);
     sprite.setInteractive({ useHandCursor: true });
-    sprite.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
-      if (pointer.button === 0) this.fireLettersAtOctopus(id);
-    });
+    sprite.setInteractive({ useHandCursor: true });
     const lifeBar = this.add.graphics().setDepth(7);
     this.octopuses.set(id, {
       id,

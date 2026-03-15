@@ -11,6 +11,7 @@ interface PratEntity {
   text: Phaser.GameObjects.Text;
   power: number;
   captured: boolean;
+  healAmount?: number;
 }
 
 interface RemoteBoatData {
@@ -52,6 +53,8 @@ const MAX_MANA = 100;
 const SHOT_COST = 40;
 const MANA_REGEN_PER_SECOND = 8;
 const MANA_PER_PRAT_CAPTURE = 10;
+const HEAL_LETTER_PROBABILITY = 0.1;
+const HEAL_PERCENT_OF_MAX = 0.1;
 const LETTER_DAMAGE = 10;
 const LETTER_SPEED = 400;
 const PRAT_LETTERS = ["P", "R", "A", "T"];
@@ -584,6 +587,28 @@ export class GameScene extends Phaser.Scene {
   }
 
   private spawnPratAt(x: number, y: number): void {
+    const isHealLetter = Math.random() < HEAL_LETTER_PROBABILITY;
+
+    if (isHealLetter) {
+      const size = 28;
+      const id = `prat-${this.nextPratId++}`;
+      const text = this.add.text(x, y, "A", {
+        fontSize: `${size}px`,
+        fontStyle: "bold",
+        color: "#00aa00",
+      });
+      text.setOrigin(0.5);
+
+      this.pratEntities.push({
+        id,
+        text,
+        power: 0,
+        captured: false,
+        healAmount: Math.floor(MAX_LIFE * HEAL_PERCENT_OF_MAX),
+      });
+      return;
+    }
+
     const pratWords = ["prat", "PRAT", "prat", "PrAt", "prat"];
     const styles = [
       { fontStyle: "normal", power: 1 },
@@ -1029,9 +1054,13 @@ export class GameScene extends Phaser.Scene {
 
       if (distance < this.captureRadius) {
         entity.captured = true;
-        this.score += entity.power;
-        this.mana = Math.min(MAX_MANA, this.mana + MANA_PER_PRAT_CAPTURE);
-        this.scoreText.setText(`Prat capturés: ${this.score}`);
+        if (entity.healAmount != null) {
+          this.life = Math.min(MAX_LIFE, this.life + entity.healAmount);
+        } else {
+          this.score += entity.power;
+          this.mana = Math.min(MAX_MANA, this.mana + MANA_PER_PRAT_CAPTURE);
+          this.scoreText.setText(`Prat capturés: ${this.score}`);
+        }
 
         const flash = this.add.circle(entity.text.x, entity.text.y, 60, CAPTURE_FLASH_COLOR, 0.5);
         flash.setDepth(4);

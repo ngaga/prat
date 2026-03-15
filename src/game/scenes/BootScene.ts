@@ -43,6 +43,18 @@ export class BootScene extends Phaser.Scene {
     octopusText.destroy();
     octopusRenderTexture.destroy();
 
+    const stingrayText = this.add.text(0, 0, "R", {
+      fontSize: "36px",
+      color: "#555555",
+      fontFamily: "sans-serif",
+    });
+    stingrayText.setOrigin(0.5, 0.5);
+    const stingrayRenderTexture = this.add.renderTexture(0, 0, 48, 48);
+    stingrayRenderTexture.draw(stingrayText, 24, 24);
+    stingrayRenderTexture.saveTexture("stingray");
+    stingrayText.destroy();
+    stingrayRenderTexture.destroy();
+
     const boatGraphics = this.add.graphics();
     boatGraphics.fillStyle(0x000000, 1);
     boatGraphics.fillTriangle(40, 0, 0, 30, 80, 30);

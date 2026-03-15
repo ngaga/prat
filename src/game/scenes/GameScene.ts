@@ -29,6 +29,15 @@ interface OctopusEntity {
   spawnTime: number;
 }
 
+interface StingrayEntity {
+  id: string;
+  sprite: Phaser.GameObjects.Image;
+  lifeBar: Phaser.GameObjects.Graphics;
+  life: number;
+  baseY: number;
+  spawnTime: number;
+}
+
 interface LetterProjectile {
   text: Phaser.GameObjects.Text;
   targetPlayerId: string | null;
@@ -64,6 +73,11 @@ const OCTOPUS_SHOOT_DELAY_MS = 5000;
 const OCTOPUS_SHOOT_INTERVAL_MS = 3000;
 const OCTOPUS_SPAWN_CHECK_INTERVAL_MS = 3000;
 const OCTOPUS_SPAWN_PROBABILITY = 1 / 3;
+const STINGRAY_LIFE = 60;
+const STINGRAY_SPEED = 80;
+const STINGRAY_AMPLITUDE = 25;
+const STINGRAY_WAVE_FREQUENCY = 0.5;
+const STINGRAY_SPAWN_INTERVAL_MS = 4000;
 const PROJECTILE_MAX_RANGE = Math.sqrt(VIEW_WIDTH ** 2 + VIEW_HEIGHT ** 2) / 2;
 function shortId(uuid: string): string {
   return uuid.slice(0, 8);
@@ -114,6 +128,9 @@ export class GameScene extends Phaser.Scene {
   private nextOctopusId = 0;
   private octopusesEnabled = true;
   private lastOctopusSpawnCheckTime = 0;
+  private stingrays = new Map<string, StingrayEntity>();
+  private nextStingrayId = 0;
+  private lastStingraySpawnTime = 0;
 
   constructor() {
     super({ key: "GameScene" });
@@ -133,6 +150,7 @@ export class GameScene extends Phaser.Scene {
     if (this.octopusesEnabled) {
       this.lastOctopusSpawnCheckTime = Date.now();
     }
+    this.lastStingraySpawnTime = Date.now();
 
     this.input.on("pointerdown", this.onPointerDown, this);
     this.game.canvas.addEventListener("contextmenu", (event) => event.preventDefault());
@@ -291,6 +309,11 @@ export class GameScene extends Phaser.Scene {
       octopus.lifeBar.destroy();
     }
     this.octopuses.clear();
+    for (const stingray of this.stingrays.values()) {
+      stingray.sprite.destroy();
+      stingray.lifeBar.destroy();
+    }
+    this.stingrays.clear();
     if (this.pratSpawnTimer) {
       clearInterval(this.pratSpawnTimer);
       this.pratSpawnTimer = null;
@@ -532,6 +555,13 @@ export class GameScene extends Phaser.Scene {
         return;
       }
     }
+    for (const [, stingray] of this.stingrays) {
+      const distance = Phaser.Math.Distance.Between(worldX, worldY, stingray.sprite.x, stingray.sprite.y);
+      if (distance < clickRadius) {
+        this.fireLettersAtPosition(stingray.sprite.x, stingray.sprite.y);
+        return;
+      }
+    }
     this.fireLettersAtPosition(worldX, worldY);
   }
 
@@ -674,6 +704,7 @@ export class GameScene extends Phaser.Scene {
     if (this.octopusesEnabled) {
       this.updateOctopuses();
     }
+    this.updateStingrays();
     this.updateBoatMovement();
 
     this.checkPratCapture();
@@ -707,7 +738,7 @@ export class GameScene extends Phaser.Scene {
         continue;
       }
       const target = this.getProjectileTargetPosition(projectile);
-      let hitTarget: { x: number; y: number; playerId?: string; octopusId?: string } | null = null;
+      let hitTarget: { x: number; y: number; playerId?: string; octopusId?: string; stingrayId?: string } | null = null;
       if (target) {
         const distanceToTarget = Phaser.Math.Distance.Between(
           projectile.text.x,
@@ -750,6 +781,20 @@ export class GameScene extends Phaser.Scene {
             }
           }
         }
+        if (!hitTarget) {
+          for (const [stingrayId, stingray] of this.stingrays) {
+            const distance = Phaser.Math.Distance.Between(
+              projectile.text.x,
+              projectile.text.y,
+              stingray.sprite.x,
+              stingray.sprite.y
+            );
+            if (distance < hitThreshold) {
+              hitTarget = { x: stingray.sprite.x, y: stingray.sprite.y, stingrayId };
+              break;
+            }
+          }
+        }
       }
       if (hitTarget) {
         if (hitTarget.playerId) {
@@ -762,6 +807,16 @@ export class GameScene extends Phaser.Scene {
               octopus.sprite.destroy();
               octopus.lifeBar.destroy();
               this.octopuses.delete(hitTarget.octopusId);
+            }
+          }
+        } else if (hitTarget.stingrayId) {
+          const stingray = this.stingrays.get(hitTarget.stingrayId);
+          if (stingray) {
+            stingray.life -= projectile.damage;
+            if (stingray.life <= 0) {
+              stingray.sprite.destroy();
+              stingray.lifeBar.destroy();
+              this.stingrays.delete(hitTarget.stingrayId);
             }
           }
         }
@@ -935,6 +990,62 @@ export class GameScene extends Phaser.Scene {
       lastShotTime: 0,
       spawnTime: Date.now(),
     });
+  }
+
+  private spawnSingleStingray(): void {
+    if (!this.textures.exists("stingray")) return;
+    const spawnX = -WORLD_SIZE + WORLD_MARGIN;
+    const baseY = Phaser.Math.Between(-WORLD_SIZE + WORLD_MARGIN, WORLD_SIZE - WORLD_MARGIN);
+    const id = `stingray-${this.nextStingrayId++}`;
+    const sprite = this.add.image(spawnX, baseY, "stingray");
+    sprite.setScale(0.7);
+    sprite.setDepth(4);
+    sprite.setInteractive({ useHandCursor: true });
+    const lifeBar = this.add.graphics().setDepth(6);
+    this.stingrays.set(id, {
+      id,
+      sprite,
+      lifeBar,
+      life: STINGRAY_LIFE,
+      baseY,
+      spawnTime: Date.now(),
+    });
+  }
+
+  private updateStingrays(): void {
+    const now = Date.now();
+    const deltaSeconds = this.game.loop.delta / 1000;
+    const toRemove: string[] = [];
+
+    if (now - this.lastStingraySpawnTime >= STINGRAY_SPAWN_INTERVAL_MS) {
+      this.lastStingraySpawnTime = now;
+      this.spawnSingleStingray();
+    }
+
+    for (const stingray of this.stingrays.values()) {
+      stingray.sprite.x += STINGRAY_SPEED * deltaSeconds;
+      const elapsedSeconds = (now - stingray.spawnTime) / 1000;
+      stingray.sprite.y =
+        stingray.baseY +
+        STINGRAY_AMPLITUDE * Math.sin(2 * Math.PI * STINGRAY_WAVE_FREQUENCY * elapsedSeconds);
+
+      const lifeRatio = stingray.life / STINGRAY_LIFE;
+      stingray.lifeBar.clear();
+      this.drawBar(stingray.lifeBar, stingray.sprite.x - 20, stingray.sprite.y - 35, 40, 5, 0x333333, 0xff6600, lifeRatio);
+
+      if (stingray.sprite.x > WORLD_SIZE + 50 || stingray.life <= 0) {
+        toRemove.push(stingray.id);
+      }
+    }
+
+    for (const id of toRemove) {
+      const stingray = this.stingrays.get(id);
+      if (stingray) {
+        stingray.sprite.destroy();
+        stingray.lifeBar.destroy();
+        this.stingrays.delete(id);
+      }
+    }
   }
 
   private countOctopusesInVisibleArea(): number {

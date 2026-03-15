@@ -58,10 +58,11 @@ const PRAT_SPAWN_RADIUS = 600;
 const MAX_PRATS = 80;
 const CAPTURE_FLASH_COLOR = 0x000000;
 const MAX_LIFE = 100;
-const MAX_MANA = 100;
-const SHOT_COST = 40;
-const MANA_REGEN_PER_SECOND = 8;
-const MANA_PER_PRAT_CAPTURE = 10;
+const XP_PER_PRAT = 1;
+const XP_PER_OCTOPUS_OR_STINGRAY = 100;
+const XP_BASE_FOR_LEVEL_2 = 1000;
+const XP_MULTIPLIER_PER_LEVEL = 2;
+const XP_PER_PLAYER_LEVEL = 50;
 const HEAL_LETTER_PROBABILITY = 0.1;
 const HEAL_PERCENT_OF_MAX = 0.1;
 const LETTER_DAMAGE = 10;
@@ -80,8 +81,24 @@ const STINGRAY_AMPLITUDE = 25;
 const STINGRAY_WAVE_FREQUENCY = 0.5;
 const STINGRAY_SPAWN_INTERVAL_MS = 4000;
 const PROJECTILE_MAX_RANGE = Math.sqrt(VIEW_WIDTH ** 2 + VIEW_HEIGHT ** 2) / 2;
+const BAR_LABEL_WIDTH = 70;
+const BAR_X = 20 + BAR_LABEL_WIDTH;
 function shortId(uuid: string): string {
   return uuid.slice(0, 8);
+}
+
+function getLevelFromExperience(totalExperience: number): number {
+  if (totalExperience < XP_BASE_FOR_LEVEL_2) return 1;
+  return Math.floor(Math.log2(totalExperience / XP_BASE_FOR_LEVEL_2 + 1)) + 1;
+}
+
+function getExperienceProgressForCurrentLevel(totalExperience: number): { current: number; needed: number } {
+  const level = getLevelFromExperience(totalExperience);
+  const cumulativeForCurrentLevel =
+    level <= 1 ? 0 : XP_BASE_FOR_LEVEL_2 * (Math.pow(XP_MULTIPLIER_PER_LEVEL, level - 1) - 1);
+  const xpInCurrentLevel = totalExperience - cumulativeForCurrentLevel;
+  const xpNeededForNextLevel = XP_BASE_FOR_LEVEL_2 * Math.pow(XP_MULTIPLIER_PER_LEVEL, level - 1);
+  return { current: xpInCurrentLevel, needed: xpNeededForNextLevel };
 }
 
 function normalizeDirection(
@@ -114,14 +131,15 @@ export class GameScene extends Phaser.Scene {
   private pratSpawnTimer: ReturnType<typeof setInterval> | null = null;
   private nextPratId = 0;
   private lifeBar!: Phaser.GameObjects.Graphics;
-  private manaBar!: Phaser.GameObjects.Graphics;
+  private experienceBar!: Phaser.GameObjects.Graphics;
   private sea!: Phaser.GameObjects.TileSprite;
   private borderTop!: Phaser.GameObjects.TileSprite;
   private borderBottom!: Phaser.GameObjects.TileSprite;
   private borderLeft!: Phaser.GameObjects.TileSprite;
   private borderRight!: Phaser.GameObjects.TileSprite;
   private life = MAX_LIFE;
-  private mana = MAX_MANA;
+  private experience = 0;
+  private level = 1;
   private letterProjectiles: LetterProjectile[] = [];
   private remoteProjectiles: LetterProjectile[] = [];
   private octopuses = new Map<string, OctopusEntity>();
@@ -164,7 +182,16 @@ export class GameScene extends Phaser.Scene {
       onPratCaptured: () => {},
       onPlayerHit: (payload) => {
         if (payload.targetId === this.multiplayer.getPlayerId()) {
+          const previousLife = this.life;
           this.life = Math.max(0, this.life - payload.damage);
+          if (previousLife > 0 && this.life <= 0) {
+            this.multiplayer.broadcastPlayerEliminated(payload.attackerId, this.multiplayer.getPlayerId(), this.level);
+          }
+        }
+      },
+      onPlayerEliminated: (payload) => {
+        if (payload.attackerId === this.multiplayer.getPlayerId()) {
+          this.addExperience(payload.victimLevel * XP_PER_PLAYER_LEVEL);
         }
       },
       onPlayerShot: (payload) => {
@@ -181,6 +208,7 @@ export class GameScene extends Phaser.Scene {
         rotation: this.boat.rotation,
         score: this.score,
         life: this.life,
+        level: this.level,
       }),
     });
     this.multiplayer.connect();
@@ -220,7 +248,7 @@ export class GameScene extends Phaser.Scene {
       .setName("multiplayer-status");
     statusText.setPosition(this.scale.width - 20, 20);
 
-    this.createLifeAndManaBars();
+    this.createLifeAndExperienceBars();
 
     this.spawnInitialPrats();
     this.startPratRespawn();
@@ -252,24 +280,55 @@ export class GameScene extends Phaser.Scene {
     this.borderRight.setDepth(1);
   }
 
-  private createLifeAndManaBars(): void {
+  private createLifeAndExperienceBars(): void {
     const barWidth = 200;
     const barHeight = 14;
-    const x = 20;
+    const labelX = 20;
     const lifeY = this.scale.height - 55;
-    const manaY = this.scale.height - 35;
+    const experienceY = this.scale.height - 35;
 
     this.lifeBar = this.add.graphics().setScrollFactor(0);
 
-    this.manaBar = this.add.graphics().setScrollFactor(0);
-    this.drawBar(this.manaBar, x, manaY, barWidth, barHeight, 0x333333, 0x0066ff, 1);
+    this.experienceBar = this.add.graphics().setScrollFactor(0);
+    this.drawBar(this.experienceBar, BAR_X, experienceY, barWidth, barHeight, 0x333333, 0x9b59b6, 0);
 
     this.add
-      .text(x, lifeY - 16, "Vie", { fontSize: "12px", color: "#000" })
+      .text(labelX, lifeY + barHeight / 2, "PV", { fontSize: "12px", color: "#000" })
+      .setOrigin(0, 0.5)
       .setScrollFactor(0);
     this.add
-      .text(x, manaY - 16, "Magie", { fontSize: "12px", color: "#000" })
+      .text(labelX, experienceY + barHeight / 2, "Exp.", { fontSize: "12px", color: "#000" })
+      .setOrigin(0, 0.5)
       .setScrollFactor(0);
+    this.add
+      .text(BAR_X + barWidth + 10, experienceY + barHeight / 2, "Niv. 1", { fontSize: "12px", color: "#000" })
+      .setOrigin(0, 0.5)
+      .setScrollFactor(0)
+      .setName("level-text");
+  }
+
+  private addExperience(amount: number): void {
+    const previousLevel = this.level;
+    this.experience += amount;
+    this.level = getLevelFromExperience(this.experience);
+    if (this.level > previousLevel) {
+      const levelUpText = this.add
+        .text(this.scale.width / 2, this.scale.height / 2 - 50, `Niveau ${this.level} !`, {
+          fontSize: "32px",
+          fontStyle: "bold",
+          color: "#9b59b6",
+        })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setDepth(100);
+      this.tweens.add({
+        targets: levelUpText,
+        alpha: 0,
+        y: levelUpText.y - 80,
+        duration: 1500,
+        onComplete: () => levelUpText.destroy(),
+      });
+    }
   }
 
   private drawBar(
@@ -694,10 +753,12 @@ export class GameScene extends Phaser.Scene {
     const barWidth = 200;
     const barHeight = 14;
     const lifeY = this.scale.height - 55;
-    const manaY = this.scale.height - 35;
-    this.mana = Math.min(MAX_MANA, this.mana + (MANA_REGEN_PER_SECOND * this.game.loop.delta) / 1000);
-    this.drawBar(this.lifeBar, 20, lifeY, barWidth, barHeight, 0x333333, 0x00ff00, this.life / MAX_LIFE);
-    this.drawBar(this.manaBar, 20, manaY, barWidth, barHeight, 0x333333, 0x0066ff, this.mana / MAX_MANA);
+    const experienceY = this.scale.height - 35;
+    this.drawBar(this.lifeBar, BAR_X, lifeY, barWidth, barHeight, 0x333333, 0x00ff00, this.life / MAX_LIFE);
+    const { current: xpCurrent, needed: xpNeeded } = getExperienceProgressForCurrentLevel(this.experience);
+    this.drawBar(this.experienceBar, BAR_X, experienceY, barWidth, barHeight, 0x333333, 0x9b59b6, xpCurrent / xpNeeded);
+    const levelText = this.children.getByName("level-text") as Phaser.GameObjects.Text;
+    if (levelText) levelText.setText(`Niv. ${this.level}`);
 
     this.updateLetterProjectiles();
     this.updateRemoteProjectiles();
@@ -805,6 +866,7 @@ export class GameScene extends Phaser.Scene {
           if (octopus) {
             octopus.life -= projectile.damage;
             if (octopus.life <= 0) {
+              this.addExperience(XP_PER_OCTOPUS_OR_STINGRAY);
               octopus.sprite.destroy();
               octopus.lifeBar.destroy();
               this.octopuses.delete(hitTarget.octopusId);
@@ -815,6 +877,7 @@ export class GameScene extends Phaser.Scene {
           if (stingray) {
             stingray.life -= projectile.damage;
             if (stingray.life <= 0) {
+              this.addExperience(XP_PER_OCTOPUS_OR_STINGRAY);
               stingray.sprite.destroy();
               stingray.lifeBar.destroy();
               this.stingrays.delete(hitTarget.stingrayId);
@@ -1170,7 +1233,7 @@ export class GameScene extends Phaser.Scene {
           this.life = Math.min(MAX_LIFE, this.life + entity.healAmount);
         } else {
           this.score += entity.power;
-          this.mana = Math.min(MAX_MANA, this.mana + MANA_PER_PRAT_CAPTURE);
+          this.addExperience(XP_PER_PRAT);
           this.scoreText.setText(`Prat capturés: ${this.score}`);
         }
 

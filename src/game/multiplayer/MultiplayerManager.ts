@@ -11,6 +11,7 @@ export interface RemotePlayer {
   rotation: number;
   score: number;
   life: number;
+  level: number;
   color: number;
 }
 
@@ -24,6 +25,12 @@ export interface PlayerHitPayload {
   attackerId: string;
   targetId: string;
   damage: number;
+}
+
+export interface PlayerEliminatedPayload {
+  victimId: string;
+  attackerId: string;
+  victimLevel: number;
 }
 
 export interface PlayerShotPayload {
@@ -40,8 +47,9 @@ export interface MultiplayerCallbacks {
   onPratCaptured: (pratIndex: number, playerId: string) => void;
   onPlayerHit?: (payload: PlayerHitPayload) => void;
   onPlayerShot?: (payload: PlayerShotPayload) => void;
+  onPlayerEliminated?: (payload: PlayerEliminatedPayload) => void;
   onConnected?: () => void;
-  getLocalState: () => { x: number; y: number; rotation: number; score: number; life: number };
+  getLocalState: () => { x: number; y: number; rotation: number; score: number; life: number; level: number };
 }
 
 function generatePlayerId(): string {
@@ -110,7 +118,7 @@ export class MultiplayerManager {
 
     this.channel
       .on("broadcast", { event: "player-position" }, (payload) => {
-        const { playerId, x, y, rotation, score, life } = payload.payload;
+        const { playerId, x, y, rotation, score, life, level } = payload.payload;
         if (playerId === this.playerId) return;
         const existing = this.remotePlayers.get(playerId);
         const color = existing?.color ?? hashToColor(playerId);
@@ -121,12 +129,13 @@ export class MultiplayerManager {
           rotation,
           score: score ?? existing?.score ?? 0,
           life: life ?? existing?.life ?? 100,
+          level: level ?? existing?.level ?? 1,
           color,
         });
         this.callbacks.onRemotePlayerUpdate(this.getRemotePlayers());
       })
       .on("broadcast", { event: "player-join" }, (payload) => {
-        const { playerId, x, y, rotation, score } = payload.payload;
+        const { playerId, x, y, rotation, score, life, level } = payload.payload;
         if (playerId === this.playerId) return;
         const color = hashToColor(playerId);
         this.remotePlayers.set(playerId, {
@@ -135,7 +144,8 @@ export class MultiplayerManager {
           y,
           rotation,
           score: score ?? 0,
-          life: 100,
+          life: life ?? 100,
+          level: level ?? 1,
           color,
         });
         this.callbacks.onRemotePlayerUpdate(this.getRemotePlayers());
@@ -148,6 +158,10 @@ export class MultiplayerManager {
       .on("broadcast", { event: "player-hit" }, (payload) => {
         const data = payload.payload as PlayerHitPayload;
         this.callbacks.onPlayerHit?.(data);
+      })
+      .on("broadcast", { event: "player-eliminated" }, (payload) => {
+        const data = payload.payload as PlayerEliminatedPayload;
+        this.callbacks.onPlayerEliminated?.(data);
       })
       .on("broadcast", { event: "player-shot" }, (payload) => {
         const data = payload.payload as PlayerShotPayload;
@@ -183,11 +197,12 @@ export class MultiplayerManager {
         ...this.lastPosition,
         score: 0,
         life: 100,
+        level: 1,
       },
     });
   }
 
-  broadcastPosition(x: number, y: number, rotation: number, score: number, life: number): void {
+  broadcastPosition(x: number, y: number, rotation: number, score: number, life: number, level: number): void {
     this.lastPosition = { x, y, rotation };
     this.channel?.send({
       type: "broadcast",
@@ -199,6 +214,19 @@ export class MultiplayerManager {
         rotation,
         score,
         life,
+        level,
+      },
+    });
+  }
+
+  broadcastPlayerEliminated(attackerId: string, victimId: string, victimLevel: number): void {
+    this.channel?.send({
+      type: "broadcast",
+      event: "player-eliminated",
+      payload: {
+        victimId,
+        attackerId,
+        victimLevel,
       },
     });
   }
@@ -247,7 +275,7 @@ export class MultiplayerManager {
       if (this.isConnected) {
         const state = this.callbacks.getLocalState();
         this.lastPosition = { x: state.x, y: state.y, rotation: state.rotation };
-        this.broadcastPosition(state.x, state.y, state.rotation, state.score, state.life);
+        this.broadcastPosition(state.x, state.y, state.rotation, state.score, state.life, state.level);
       }
     }, POSITION_BROADCAST_INTERVAL_MS);
   }

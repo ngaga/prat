@@ -68,6 +68,7 @@ const LETTER_DAMAGE = 10;
 const LETTER_SPEED = 400;
 const PRAT_LETTERS = ["P", "R", "A", "T"];
 const OCTOPUS_LIFE = 80;
+const OCTOPUS_DAMAGE = 4;
 const OCTOPUS_LIFETIME_MS = 20000;
 const OCTOPUS_SHOOT_DELAY_MS = 5000;
 const OCTOPUS_SHOOT_INTERVAL_MS = 3000;
@@ -998,7 +999,7 @@ export class GameScene extends Phaser.Scene {
     const baseY = Phaser.Math.Between(-WORLD_SIZE + WORLD_MARGIN, WORLD_SIZE - WORLD_MARGIN);
     const id = `stingray-${this.nextStingrayId++}`;
     const sprite = this.add.image(spawnX, baseY, "stingray");
-    sprite.setScale(0.7);
+    sprite.setScale(1.2);
     sprite.setDepth(4);
     sprite.setInteractive({ useHandCursor: true });
     const lifeBar = this.add.graphics().setDepth(6);
@@ -1138,7 +1139,7 @@ export class GameScene extends Phaser.Scene {
           text,
           targetPlayerId: null,
           targetOctopusId: null,
-          damage: LETTER_DAMAGE,
+          damage: OCTOPUS_DAMAGE,
           speed: LETTER_SPEED * 0.8,
           directionX: direction.x,
           directionY: direction.y,

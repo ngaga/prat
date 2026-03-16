@@ -1,13 +1,27 @@
 # Supabase setup
 
-## Feature flags
+## Environment variables
 
-Run the migration in your Supabase project:
+Add to `.env.local`:
+
+- `SUPABASE_SERVICE_ROLE_KEY` - Service role key (for API routes, never exposed to client)
+
+## Migrations
+
+Run the migration:
 
 1. Go to Supabase Dashboard > SQL Editor
-2. Execute the contents of `migrations/20250213000000_create_feature_flags.sql`
+2. Execute the contents of `migrations/20250213000000_init.sql`
 
 Or with Supabase CLI: `supabase db push`
+
+## Access
+
+Database access is restricted: only the service role can read/write. The game uses API routes (`/api/feature-flags/*`, `/api/players/*`) that run server-side with the service role key.
+
+## Feature flags
+
+Modify via Supabase Dashboard (SQL Editor) or Dashboard table editor:
 
 ### Disable octopuses
 

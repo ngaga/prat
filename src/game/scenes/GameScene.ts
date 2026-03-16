@@ -4,6 +4,7 @@ import {
   MultiplayerManager,
   type PlayerShotPayload,
 } from "../multiplayer/MultiplayerManager";
+import { upsertPlayer } from "@/lib/players";
 import { VIEW_HEIGHT, VIEW_WIDTH } from "../config";
 
 interface PratEntity {
@@ -140,6 +141,9 @@ export class GameScene extends Phaser.Scene {
   private life = MAX_LIFE;
   private experience = 0;
   private level = 1;
+  private killsOctopus = 0;
+  private killsStingray = 0;
+  private playerName: string | null = null;
   private letterProjectiles: LetterProjectile[] = [];
   private remoteProjectiles: LetterProjectile[] = [];
   private octopuses = new Map<string, OctopusEntity>();
@@ -155,8 +159,9 @@ export class GameScene extends Phaser.Scene {
     super({ key: "GameScene" });
   }
 
-  init(data: { octopusesEnabled?: boolean }): void {
+  init(data: { octopusesEnabled?: boolean; playerName?: string }): void {
     this.octopusesEnabled = data?.octopusesEnabled ?? true;
+    this.playerName = data?.playerName ?? null;
   }
 
   create(): void {
@@ -212,6 +217,9 @@ export class GameScene extends Phaser.Scene {
       }),
     });
     this.multiplayer.connect();
+    if (!this.playerName) {
+      this.playerName = this.multiplayer.getPlayerId();
+    }
 
     this.boat = this.physics.add.sprite(0, 0, "boat");
     this.boat.setCollideWorldBounds(true);
@@ -307,11 +315,23 @@ export class GameScene extends Phaser.Scene {
       .setName("level-text");
   }
 
+  private async savePlayer(): Promise<void> {
+    if (!this.playerName) return;
+    await upsertPlayer({
+      name: this.playerName,
+      exp: this.experience,
+      level: this.level,
+      kills_octopus: this.killsOctopus,
+      kills_stingray: this.killsStingray,
+    });
+  }
+
   private addExperience(amount: number): void {
     const previousLevel = this.level;
     this.experience += amount;
     this.level = getLevelFromExperience(this.experience);
     if (this.level > previousLevel) {
+      this.savePlayer();
       const levelUpText = this.add
         .text(this.scale.width / 2, this.scale.height / 2 - 50, `Niveau ${this.level} !`, {
           fontSize: "32px",
@@ -350,6 +370,7 @@ export class GameScene extends Phaser.Scene {
 
   shutdown(): void {
     this.isSceneActive = false;
+    this.savePlayer();
     this.input.off("pointerdown", this.onPointerDown, this);
     this.scale.off("resize", this.updateCameraZoom, this);
     for (const projectile of this.letterProjectiles) {
@@ -866,6 +887,7 @@ export class GameScene extends Phaser.Scene {
           if (octopus) {
             octopus.life -= projectile.damage;
             if (octopus.life <= 0) {
+              this.killsOctopus++;
               this.addExperience(XP_PER_OCTOPUS_OR_STINGRAY);
               octopus.sprite.destroy();
               octopus.lifeBar.destroy();
@@ -877,6 +899,7 @@ export class GameScene extends Phaser.Scene {
           if (stingray) {
             stingray.life -= projectile.damage;
             if (stingray.life <= 0) {
+              this.killsStingray++;
               this.addExperience(XP_PER_OCTOPUS_OR_STINGRAY);
               stingray.sprite.destroy();
               stingray.lifeBar.destroy();

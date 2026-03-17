@@ -5,6 +5,9 @@ export async function GET(
   _request: Request,
   { params }: { params: Promise<{ name: string }> }
 ) {
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return NextResponse.json(null);
+  }
   try {
     const { name } = await params;
     const supabase = createAdminClient();

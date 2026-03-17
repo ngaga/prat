@@ -4,7 +4,7 @@ import {
   MultiplayerManager,
   type PlayerShotPayload,
 } from "../multiplayer/MultiplayerManager";
-import { upsertPlayer } from "@/lib/players";
+import { getPlayerByName, upsertPlayer } from "@/lib/players";
 import { VIEW_HEIGHT, VIEW_WIDTH } from "../config";
 
 interface PratEntity {
@@ -164,7 +164,7 @@ export class GameScene extends Phaser.Scene {
     this.playerName = data?.playerName ?? null;
   }
 
-  create(): void {
+  async create(): Promise<void> {
     this.physics.world.setBounds(-WORLD_SIZE, -WORLD_SIZE, WORLD_SIZE * 2, WORLD_SIZE * 2);
 
     this.sea = this.add.tileSprite(0, 0, SEA_TILE_SIZE, SEA_TILE_SIZE, "sea");
@@ -220,13 +220,37 @@ export class GameScene extends Phaser.Scene {
     if (!this.playerName) {
       this.playerName = this.multiplayer.getPlayerId();
     }
+    if (this.playerName) {
+      const existingPlayer = await getPlayerByName(this.playerName);
+      if (existingPlayer) {
+        this.experience = existingPlayer.exp;
+        this.level = existingPlayer.level;
+        this.killsOctopus = existingPlayer.kills_octopus;
+        this.killsStingray = existingPlayer.kills_stingray;
+      } else {
+        const created = await upsertPlayer({
+          name: this.playerName,
+          exp: 0,
+          level: 1,
+          kills_octopus: 0,
+          kills_stingray: 0,
+        });
+        if (!created) {
+          console.warn("Failed to create player in database");
+        }
+      }
+    }
 
     this.boat = this.physics.add.sprite(0, 0, "boat");
     this.boat.setCollideWorldBounds(true);
     this.boat.setScale(0.5);
 
+    const displayName =
+      this.playerName && this.playerName.length < 15
+        ? this.playerName
+        : shortId(this.multiplayer.getPlayerId());
     this.boatNameLabel = this.add
-      .text(0, -50, shortId(this.multiplayer.getPlayerId()), {
+      .text(0, -50, displayName, {
         fontSize: "12px",
         color: "#000",
       })
@@ -766,6 +790,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   update(): void {
+    if (!this.boat || !this.boatNameLabel) return;
     this.boatNameLabel.setPosition(this.boat.x, this.boat.y - 50);
     this.sea.setPosition(this.boat.x, this.boat.y);
     this.sea.tilePositionX = this.boat.x;

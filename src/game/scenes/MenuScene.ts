@@ -26,8 +26,23 @@ export class MenuScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
 
+    const nameLabel = this.add
+      .text(centerX, centerY + 10, "Entre ton nom", {
+        fontSize: "18px",
+        color: "#333",
+      })
+      .setOrigin(0.5);
+
+    const nameInput = document.createElement("input");
+    nameInput.type = "text";
+    nameInput.placeholder = "Ton nom";
+    nameInput.maxLength = 30;
+    nameInput.style.cssText =
+      "width: 220px; height: 40px; font-size: 18px; padding: 8px; border: 2px solid #333; text-align: center;";
+    const nameInputDom = this.add.dom(centerX, centerY + 50, nameInput);
+
     const playButton = this.add
-      .text(centerX, centerY + 80, "Jouer", {
+      .text(centerX, centerY + 110, "Jouer", {
         fontSize: "32px",
         color: "#fff",
         backgroundColor: "#333",
@@ -36,6 +51,13 @@ export class MenuScene extends Phaser.Scene {
       .setPadding(24, 12)
       .setInteractive({ useHandCursor: true });
 
+    const errorText = this.add
+      .text(centerX, centerY + 150, "", {
+        fontSize: "16px",
+        color: "#c00",
+      })
+      .setOrigin(0.5);
+
     playButton.on("pointerover", () => {
       playButton.setStyle({ backgroundColor: "#555" });
     });
@@ -43,14 +65,26 @@ export class MenuScene extends Phaser.Scene {
       playButton.setStyle({ backgroundColor: "#333" });
     });
     playButton.on("pointerdown", () => {
-      this.startGame();
+      const name = (nameInputDom.node as HTMLInputElement).value.trim();
+      if (!name) {
+        errorText.setText("Entre ton nom pour jouer");
+        this.tweens.add({
+          targets: errorText,
+          alpha: 0.3,
+          duration: 150,
+          yoyo: true,
+        });
+        return;
+      }
+      errorText.setText("");
+      this.startGame(name);
     });
   }
 
-  private async startGame(): Promise<void> {
+  private async startGame(playerName: string): Promise<void> {
     this.playBackgroundMusic();
     const octopusesEnabled = await isOctopusesEnabled();
-    this.scene.start("GameScene", { octopusesEnabled });
+    this.scene.start("GameScene", { octopusesEnabled, playerName });
   }
 
   private playBackgroundMusic(): void {

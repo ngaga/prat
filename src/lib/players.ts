@@ -9,7 +9,8 @@ export interface Player {
 
 export async function getPlayerByName(name: string): Promise<Player | null> {
   try {
-    const response = await fetch(`/api/players/${encodeURIComponent(name.trim())}`);
+    const baseUrl = typeof window !== "undefined" ? window.location.origin : "";
+    const response = await fetch(`${baseUrl}/api/players/${encodeURIComponent(name.trim())}`);
     const data = (await response.json()) as Player | null;
     return data;
   } catch (error) {
@@ -26,7 +27,8 @@ export async function upsertPlayer(player: {
   kills_stingray?: number;
 }): Promise<boolean> {
   try {
-    const response = await fetch("/api/players", {
+    const baseUrl = typeof window !== "undefined" ? window.location.origin : "";
+    const response = await fetch(`${baseUrl}/api/players`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -37,8 +39,8 @@ export async function upsertPlayer(player: {
         kills_stingray: player.kills_stingray ?? 0,
       }),
     });
-    const { success } = (await response.json()) as { success: boolean };
-    return success;
+    const result = (await response.json()) as { success: boolean; error?: string };
+    return result.success;
   } catch (error) {
     console.error("upsertPlayer error:", error);
     return false;

@@ -24,5 +24,8 @@ export const gameConfig: Types.Core.GameConfig = {
       debug: false,
     },
   },
+  dom: {
+    createContainer: true,
+  },
   scene: [],
 };

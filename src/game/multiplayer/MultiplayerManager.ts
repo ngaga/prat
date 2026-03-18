@@ -6,6 +6,7 @@ const POSITION_BROADCAST_INTERVAL_MS = 33;
 
 export interface RemotePlayer {
   id: string;
+  name?: string;
   x: number;
   y: number;
   rotation: number;
@@ -49,7 +50,7 @@ export interface MultiplayerCallbacks {
   onPlayerShot?: (payload: PlayerShotPayload) => void;
   onPlayerEliminated?: (payload: PlayerEliminatedPayload) => void;
   onConnected?: () => void;
-  getLocalState: () => { x: number; y: number; rotation: number; score: number; life: number; level: number };
+  getLocalState: () => { x: number; y: number; rotation: number; score: number; life: number; level: number; name?: string };
 }
 
 function generatePlayerId(): string {
@@ -118,12 +119,13 @@ export class MultiplayerManager {
 
     this.channel
       .on("broadcast", { event: "player-position" }, (payload) => {
-        const { playerId, x, y, rotation, score, life, level } = payload.payload;
+        const { playerId, x, y, rotation, score, life, level, name } = payload.payload;
         if (playerId === this.playerId) return;
         const existing = this.remotePlayers.get(playerId);
         const color = existing?.color ?? hashToColor(playerId);
         this.remotePlayers.set(playerId, {
           id: playerId,
+          name: name ?? existing?.name,
           x,
           y,
           rotation,
@@ -135,11 +137,12 @@ export class MultiplayerManager {
         this.callbacks.onRemotePlayerUpdate(this.getRemotePlayers());
       })
       .on("broadcast", { event: "player-join" }, (payload) => {
-        const { playerId, x, y, rotation, score, life, level } = payload.payload;
+        const { playerId, x, y, rotation, score, life, level, name } = payload.payload;
         if (playerId === this.playerId) return;
         const color = hashToColor(playerId);
         this.remotePlayers.set(playerId, {
           id: playerId,
+          name,
           x,
           y,
           rotation,
@@ -189,26 +192,29 @@ export class MultiplayerManager {
   }
 
   private broadcastJoin(): void {
+    const state = this.callbacks.getLocalState();
     this.channel?.send({
       type: "broadcast",
       event: "player-join",
       payload: {
         playerId: this.playerId,
+        name: state.name,
         ...this.lastPosition,
-        score: 0,
-        life: 100,
-        level: 1,
+        score: state.score ?? 0,
+        life: state.life ?? 100,
+        level: state.level ?? 1,
       },
     });
   }
 
-  broadcastPosition(x: number, y: number, rotation: number, score: number, life: number, level: number): void {
+  broadcastPosition(x: number, y: number, rotation: number, score: number, life: number, level: number, name?: string): void {
     this.lastPosition = { x, y, rotation };
     this.channel?.send({
       type: "broadcast",
       event: "player-position",
       payload: {
         playerId: this.playerId,
+        name,
         x,
         y,
         rotation,
@@ -275,7 +281,7 @@ export class MultiplayerManager {
       if (this.isConnected) {
         const state = this.callbacks.getLocalState();
         this.lastPosition = { x: state.x, y: state.y, rotation: state.rotation };
-        this.broadcastPosition(state.x, state.y, state.rotation, state.score, state.life, state.level);
+        this.broadcastPosition(state.x, state.y, state.rotation, state.score, state.life, state.level, state.name);
       }
     }, POSITION_BROADCAST_INTERVAL_MS);
   }

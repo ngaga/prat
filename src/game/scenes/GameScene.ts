@@ -207,14 +207,20 @@ export class GameScene extends Phaser.Scene {
         if (!this.isSceneActive) return;
         this.updateMultiplayerStatus();
       },
-      getLocalState: () => ({
-        x: this.boat.x,
-        y: this.boat.y,
-        rotation: this.boat.rotation,
-        score: this.score,
-        life: this.life,
-        level: this.level,
-      }),
+      getLocalState: () => {
+        if (!this.boat) {
+          return { x: 400, y: 300, rotation: 0, score: this.score, life: this.life, level: this.level, name: this.playerName ?? undefined };
+        }
+        return {
+          x: this.boat.x,
+          y: this.boat.y,
+          rotation: this.boat.rotation,
+          score: this.score,
+          life: this.life,
+          level: this.level,
+          name: this.playerName ?? undefined,
+        };
+      },
     });
     this.multiplayer.connect();
     if (!this.playerName) {
@@ -229,7 +235,7 @@ export class GameScene extends Phaser.Scene {
         this.killsStingray = existingPlayer.kills_stingray;
       } else {
         const created = await upsertPlayer({
-          name: this.playerName,
+          name: this.playerName ?? undefined,
           exp: 0,
           level: 1,
           kills_octopus: 0,
@@ -434,7 +440,7 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private updateRemoteBoats(players: Map<string, { id: string; x: number; y: number; rotation: number; life: number }>): void {
+  private updateRemoteBoats(players: Map<string, { id: string; name?: string; x: number; y: number; rotation: number; life: number }>): void {
     if (!this.isSceneActive || !this.add) return;
     try {
       if (this.scene == null || !this.scene.isActive()) return;
@@ -451,8 +457,9 @@ export class GameScene extends Phaser.Scene {
           sprite.setScale(0.5);
           sprite.setDepth(5);
           sprite.setInteractive({ useHandCursor: true });
+          const displayName = data.name && data.name.length < 15 ? data.name : shortId(playerId);
           const nameLabel = this.add
-            .text(data.x, data.y - 50, shortId(playerId), {
+            .text(data.x, data.y - 50, displayName, {
               fontSize: "12px",
               color: "#000",
             })
@@ -464,6 +471,8 @@ export class GameScene extends Phaser.Scene {
         }
         boatData.sprite.setPosition(data.x, data.y);
         boatData.sprite.setRotation(data.rotation);
+        const displayName = data.name && data.name.length < 15 ? data.name : shortId(playerId);
+        boatData.nameLabel.setText(displayName);
         boatData.nameLabel.setPosition(data.x, data.y - 50);
         const lifeRatio = (data.life ?? MAX_LIFE) / MAX_LIFE;
         boatData.lifeBar?.clear();

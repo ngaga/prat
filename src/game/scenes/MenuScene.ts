@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { MAX_PLAYER_NAME_LENGTH } from "@/game/config";
 import { isOctopusesEnabled } from "@/lib/featureFlags";
 
 export class MenuScene extends Phaser.Scene {
@@ -36,7 +37,7 @@ export class MenuScene extends Phaser.Scene {
     const nameInput = document.createElement("input");
     nameInput.type = "text";
     nameInput.placeholder = "Ton nom";
-    nameInput.maxLength = 30;
+    nameInput.maxLength = MAX_PLAYER_NAME_LENGTH;
     nameInput.style.cssText =
       "width: 220px; height: 40px; font-size: 18px; padding: 8px; border: 2px solid #333; text-align: center;";
     const nameInputDom = this.add.dom(centerX, centerY + 50, nameInput);

@@ -5,7 +5,7 @@ import {
   type PlayerShotPayload,
 } from "../multiplayer/MultiplayerManager";
 import { getPlayerByName, upsertPlayer } from "@/lib/players";
-import { VIEW_HEIGHT, VIEW_WIDTH } from "../config";
+import { MAX_PLAYER_NAME_LENGTH, VIEW_HEIGHT, VIEW_WIDTH } from "../config";
 
 interface PratEntity {
   id: string;
@@ -252,7 +252,7 @@ export class GameScene extends Phaser.Scene {
     this.boat.setScale(0.5);
 
     const displayName =
-      this.playerName && this.playerName.length < 15
+      this.playerName && this.playerName.length <= MAX_PLAYER_NAME_LENGTH
         ? this.playerName
         : shortId(this.multiplayer.getPlayerId());
     this.boatNameLabel = this.add
@@ -457,7 +457,7 @@ export class GameScene extends Phaser.Scene {
           sprite.setScale(0.5);
           sprite.setDepth(5);
           sprite.setInteractive({ useHandCursor: true });
-          const displayName = data.name && data.name.length < 15 ? data.name : shortId(playerId);
+          const displayName = data.name && data.name.length <= MAX_PLAYER_NAME_LENGTH ? data.name : shortId(playerId);
           const nameLabel = this.add
             .text(data.x, data.y - 50, displayName, {
               fontSize: "12px",
@@ -471,7 +471,7 @@ export class GameScene extends Phaser.Scene {
         }
         boatData.sprite.setPosition(data.x, data.y);
         boatData.sprite.setRotation(data.rotation);
-        const displayName = data.name && data.name.length < 15 ? data.name : shortId(playerId);
+        const displayName = data.name && data.name.length <= MAX_PLAYER_NAME_LENGTH ? data.name : shortId(playerId);
         boatData.nameLabel.setText(displayName);
         boatData.nameLabel.setPosition(data.x, data.y - 50);
         const lifeRatio = (data.life ?? MAX_LIFE) / MAX_LIFE;

@@ -1,4 +1,6 @@
 import type { RealtimeChannel } from "@supabase/supabase-js";
+import type { PlayerInput, SerializableGameState } from "@/lib/gameTypes";
+import { playerIdToColor } from "@/lib/playerColor";
 import { createClient } from "@/lib/supabase";
 
 const CHANNEL_NAME = "prat-game";
@@ -16,41 +18,19 @@ export interface RemotePlayer {
   color: number;
 }
 
-export interface PratCapturePayload {
-  playerId: string;
-  pratIndex: number;
-  score: number;
-}
-
-export interface PlayerHitPayload {
-  attackerId: string;
-  targetId: string;
-  damage: number;
-}
-
-export interface PlayerEliminatedPayload {
-  victimId: string;
-  attackerId: string;
-  victimLevel: number;
-}
-
-export interface PlayerShotPayload {
-  shooterId: string;
-  targetId: string;
-  startX: number;
-  startY: number;
-  directionX: number;
-  directionY: number;
-}
-
 export interface MultiplayerCallbacks {
   onRemotePlayerUpdate: (players: Map<string, RemotePlayer>) => void;
-  onPratCaptured: (pratIndex: number, playerId: string) => void;
-  onPlayerHit?: (payload: PlayerHitPayload) => void;
-  onPlayerShot?: (payload: PlayerShotPayload) => void;
-  onPlayerEliminated?: (payload: PlayerEliminatedPayload) => void;
   onConnected?: () => void;
-  getLocalState: () => { x: number; y: number; rotation: number; score: number; life: number; level: number; name?: string };
+  onGameStateUpdate?: (state: SerializableGameState) => void;
+  getLocalState: () => {
+    x: number;
+    y: number;
+    rotation: number;
+    score: number;
+    life: number;
+    level: number;
+    name?: string;
+  };
 }
 
 function generatePlayerId(): string {
@@ -71,16 +51,6 @@ function getOrCreatePlayerId(): string {
   return id;
 }
 
-const PLAYER_COLORS = [0xff6b6b, 0x4ecdc4, 0xffe66d, 0x95e1d3, 0xdda0dd, 0x98d8c8];
-
-function hashToColor(str: string): number {
-  let hash = 0;
-  for (let index = 0; index < str.length; index++) {
-    hash = str.charCodeAt(index) + ((hash << 5) - hash);
-  }
-  return PLAYER_COLORS[Math.abs(hash) % PLAYER_COLORS.length];
-}
-
 export class MultiplayerManager {
   private channel: RealtimeChannel | null = null;
   private playerId: string;
@@ -89,6 +59,10 @@ export class MultiplayerManager {
   private positionBroadcastTimer: ReturnType<typeof setInterval> | null = null;
   private lastPosition = { x: 400, y: 300, rotation: 0 };
   private isConnected = false;
+  private gameEventSource: EventSource | null = null;
+  private gameStreamRoomId = "default";
+  /** When false, boat positions come from the game server (SSE); skip Supabase position join/updates. */
+  private useSupabaseForRemoteBoatPositions = true;
 
   constructor(callbacks: MultiplayerCallbacks) {
     this.playerId = getOrCreatePlayerId();
@@ -99,12 +73,64 @@ export class MultiplayerManager {
     return this.playerId;
   }
 
+  /** Call before connect(). False when the Next game API streams authoritative player positions. */
+  setUseSupabaseForRemoteBoatPositions(enabled: boolean): void {
+    this.useSupabaseForRemoteBoatPositions = enabled;
+  }
+
   getRemotePlayers(): Map<string, RemotePlayer> {
     return new Map(this.remotePlayers);
   }
 
   isActive(): boolean {
     return this.isConnected;
+  }
+
+  /**
+   * Authoritative game state via Server-Sent Events (separate from Supabase realtime).
+   */
+  connectGameStream(roomId: string): void {
+    if (typeof window === "undefined" || typeof EventSource === "undefined") return;
+    this.disconnectGameStream();
+    this.gameStreamRoomId = roomId;
+    const query = new URLSearchParams({
+      roomId,
+      playerId: this.playerId,
+    });
+    const url = `/api/game/stream?${query.toString()}`;
+    this.gameEventSource = new EventSource(url);
+    this.gameEventSource.onmessage = (event: MessageEvent<string>) => {
+      try {
+        const state = JSON.parse(event.data) as SerializableGameState;
+        this.callbacks.onGameStateUpdate?.(state);
+      } catch {
+        // Ignore malformed payloads
+      }
+    };
+  }
+
+  disconnectGameStream(): void {
+    this.gameEventSource?.close();
+    this.gameEventSource = null;
+  }
+
+  sendGameInput(input: PlayerInput): Promise<{ ok?: boolean }> {
+    const body = JSON.stringify({
+      roomId: this.gameStreamRoomId,
+      playerId: this.playerId,
+      input,
+    });
+    return fetch("/api/game/input", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    }).then(async (response) => {
+      try {
+        return (await response.json()) as { ok?: boolean };
+      } catch {
+        return {};
+      }
+    });
   }
 
   connect(): void {
@@ -119,10 +145,11 @@ export class MultiplayerManager {
 
     this.channel
       .on("broadcast", { event: "player-position" }, (payload) => {
+        if (!this.useSupabaseForRemoteBoatPositions) return;
         const { playerId, x, y, rotation, score, life, level, name } = payload.payload;
         if (playerId === this.playerId) return;
         const existing = this.remotePlayers.get(playerId);
-        const color = existing?.color ?? hashToColor(playerId);
+        const color = existing?.color ?? playerIdToColor(playerId);
         this.remotePlayers.set(playerId, {
           id: playerId,
           name: name ?? existing?.name,
@@ -137,9 +164,10 @@ export class MultiplayerManager {
         this.callbacks.onRemotePlayerUpdate(this.getRemotePlayers());
       })
       .on("broadcast", { event: "player-join" }, (payload) => {
+        if (!this.useSupabaseForRemoteBoatPositions) return;
         const { playerId, x, y, rotation, score, life, level, name } = payload.payload;
         if (playerId === this.playerId) return;
-        const color = hashToColor(playerId);
+        const color = playerIdToColor(playerId);
         this.remotePlayers.set(playerId, {
           id: playerId,
           name,
@@ -155,37 +183,18 @@ export class MultiplayerManager {
       })
       .on("broadcast", { event: "player-leave" }, (payload) => {
         const { playerId } = payload.payload;
-        this.remotePlayers.delete(playerId);
-        this.callbacks.onRemotePlayerUpdate(this.getRemotePlayers());
-      })
-      .on("broadcast", { event: "player-hit" }, (payload) => {
-        const data = payload.payload as PlayerHitPayload;
-        this.callbacks.onPlayerHit?.(data);
-      })
-      .on("broadcast", { event: "player-eliminated" }, (payload) => {
-        const data = payload.payload as PlayerEliminatedPayload;
-        this.callbacks.onPlayerEliminated?.(data);
-      })
-      .on("broadcast", { event: "player-shot" }, (payload) => {
-        const data = payload.payload as PlayerShotPayload;
-        if (data.shooterId === this.playerId) return;
-        this.callbacks.onPlayerShot?.(data);
-      })
-      .on("broadcast", { event: "prat-capture" }, (payload) => {
-        const { pratIndex, playerId } = payload.payload as PratCapturePayload;
-        this.callbacks.onPratCaptured(pratIndex, playerId);
-        const existing = this.remotePlayers.get(playerId);
-        if (existing) {
-          existing.score = payload.payload.score;
-          this.remotePlayers.set(playerId, existing);
+        if (this.useSupabaseForRemoteBoatPositions) {
+          this.remotePlayers.delete(playerId);
           this.callbacks.onRemotePlayerUpdate(this.getRemotePlayers());
         }
       })
       .subscribe((status) => {
         this.isConnected = status === "SUBSCRIBED";
         if (this.isConnected) {
-          this.broadcastJoin();
-          this.startPositionBroadcast();
+          if (this.useSupabaseForRemoteBoatPositions) {
+            this.broadcastJoin();
+            this.startPositionBroadcast();
+          }
           this.callbacks.onConnected?.();
         }
       });
@@ -207,7 +216,15 @@ export class MultiplayerManager {
     });
   }
 
-  broadcastPosition(x: number, y: number, rotation: number, score: number, life: number, level: number, name?: string): void {
+  broadcastPosition(
+    x: number,
+    y: number,
+    rotation: number,
+    score: number,
+    life: number,
+    level: number,
+    name?: string
+  ): void {
     this.lastPosition = { x, y, rotation };
     this.channel?.send({
       type: "broadcast",
@@ -225,57 +242,6 @@ export class MultiplayerManager {
     });
   }
 
-  broadcastPlayerEliminated(attackerId: string, victimId: string, victimLevel: number): void {
-    this.channel?.send({
-      type: "broadcast",
-      event: "player-eliminated",
-      payload: {
-        victimId,
-        attackerId,
-        victimLevel,
-      },
-    });
-  }
-
-  broadcastPlayerShot(targetId: string, startX: number, startY: number, directionX: number, directionY: number): void {
-    this.channel?.send({
-      type: "broadcast",
-      event: "player-shot",
-      payload: {
-        shooterId: this.playerId,
-        targetId,
-        startX,
-        startY,
-        directionX,
-        directionY,
-      },
-    });
-  }
-
-  broadcastPlayerHit(targetId: string, damage: number): void {
-    this.channel?.send({
-      type: "broadcast",
-      event: "player-hit",
-      payload: {
-        attackerId: this.playerId,
-        targetId,
-        damage,
-      },
-    });
-  }
-
-  broadcastPratCapture(pratIndex: number, score: number): void {
-    this.channel?.send({
-      type: "broadcast",
-      event: "prat-capture",
-      payload: {
-        playerId: this.playerId,
-        pratIndex,
-        score,
-      },
-    });
-  }
-
   private startPositionBroadcast(): void {
     this.positionBroadcastTimer = setInterval(() => {
       if (this.isConnected) {
@@ -287,6 +253,7 @@ export class MultiplayerManager {
   }
 
   disconnect(): void {
+    this.disconnectGameStream();
     if (this.positionBroadcastTimer) {
       clearInterval(this.positionBroadcastTimer);
       this.positionBroadcastTimer = null;

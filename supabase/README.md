@@ -21,16 +21,22 @@ Database access is restricted: only the service role can read/write. The game us
 
 ## Feature flags
 
-Modify via Supabase Dashboard (SQL Editor) or Dashboard table editor:
+Keys live in table `feature_flags`. The game reads them via API routes (`/api/feature-flags/octopuses`, `/api/feature-flags/stingrays`). The authoritative game server (`gameEngine`) polls the same keys so spawns stay in sync.
 
-### Disable octopuses
+### Octopuses (`octopuses_enabled`)
 
 ```sql
 update feature_flags set value = false where key = 'octopuses_enabled';
-```
-
-### Enable octopuses
-
-```sql
+-- enable:
 update feature_flags set value = true where key = 'octopuses_enabled';
 ```
+
+### Stingrays (`stingrays_enabled`)
+
+```sql
+update feature_flags set value = false where key = 'stingrays_enabled';
+-- enable:
+update feature_flags set value = true where key = 'stingrays_enabled';
+```
+
+Run migration `20250213120000_stingrays_feature_flag.sql` if the `stingrays_enabled` row is missing.

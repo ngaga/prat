@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { MAX_PLAYER_NAME_LENGTH } from "@/game/config";
-import { isOctopusesEnabled } from "@/lib/featureFlags";
+import { isOctopusesEnabled, isStingraysEnabled } from "@/lib/featureFlags";
 
 export class MenuScene extends Phaser.Scene {
   constructor() {
@@ -84,8 +84,11 @@ export class MenuScene extends Phaser.Scene {
 
   private async startGame(playerName: string): Promise<void> {
     this.playBackgroundMusic();
-    const octopusesEnabled = await isOctopusesEnabled();
-    this.scene.start("GameScene", { octopusesEnabled, playerName });
+    const [octopusesEnabled, stingraysEnabled] = await Promise.all([
+      isOctopusesEnabled(),
+      isStingraysEnabled(),
+    ]);
+    this.scene.start("GameScene", { octopusesEnabled, stingraysEnabled, playerName });
   }
 
   private playBackgroundMusic(): void {

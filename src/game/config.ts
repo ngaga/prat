@@ -1,10 +1,10 @@
 import Phaser from "phaser";
 import type { Types } from "phaser";
+import { VIEW_HEIGHT, VIEW_WIDTH } from "@/lib/displayConstants";
 
 export const MAX_PLAYER_NAME_LENGTH = 20;
 
-export const VIEW_WIDTH = 1920;
-export const VIEW_HEIGHT = 1080;
+export { VIEW_HEIGHT, VIEW_WIDTH };
 
 export const gameConfig: Types.Core.GameConfig = {
   type: Phaser.AUTO,

@@ -1,18 +1,20 @@
 import Phaser from "phaser";
 import { EventBus } from "../EventBus";
+import { MultiplayerManager, type RemotePlayer } from "../multiplayer/MultiplayerManager";
+import type { PratState, SerializableGameState } from "@/lib/gameTypes";
 import {
-  MultiplayerManager,
-  type PlayerShotPayload,
-} from "../multiplayer/MultiplayerManager";
+  getLevelFromExperience,
+  MAX_LIFE,
+  XP_BASE_FOR_LEVEL_2,
+  XP_MULTIPLIER_PER_LEVEL,
+} from "@/lib/gameBalance";
+import { playerIdToColor } from "@/lib/playerColor";
 import { getPlayerByName, upsertPlayer } from "@/lib/players";
 import { MAX_PLAYER_NAME_LENGTH, VIEW_HEIGHT, VIEW_WIDTH } from "../config";
 
 interface PratEntity {
   id: string;
   text: Phaser.GameObjects.Text;
-  power: number;
-  captured: boolean;
-  healAmount?: number;
 }
 
 interface RemoteBoatData {
@@ -39,58 +41,15 @@ interface StingrayEntity {
   spawnTime: number;
 }
 
-interface LetterProjectile {
-  text: Phaser.GameObjects.Text;
-  targetPlayerId: string | null;
-  targetOctopusId: string | null;
-  damage: number;
-  speed: number;
-  directionX: number;
-  directionY: number;
-  originX: number;
-  originY: number;
-}
-
 const WORLD_SIZE = 2000;
 const WORLD_MARGIN = 50;
 const SEA_TILE_SIZE = 2000;
-const PRAT_SPAWN_INTERVAL_MS = 800;
-const PRAT_SPAWN_RADIUS = 600;
-const MAX_PRATS = 80;
-const CAPTURE_FLASH_COLOR = 0x000000;
-const MAX_LIFE = 100;
-const XP_PER_PRAT = 1;
-const XP_PER_OCTOPUS_OR_STINGRAY = 100;
-const XP_BASE_FOR_LEVEL_2 = 1000;
-const XP_MULTIPLIER_PER_LEVEL = 2;
-const XP_PER_PLAYER_LEVEL = 50;
-const HEAL_LETTER_PROBABILITY = 0.1;
-const HEAL_PERCENT_OF_MAX = 0.1;
-const LETTER_DAMAGE = 10;
-const LETTER_SPEED = 400;
-const PRAT_LETTERS = ["P", "R", "A", "T"];
 const OCTOPUS_LIFE = 80;
-const OCTOPUS_DAMAGE = 4;
-const OCTOPUS_LIFETIME_MS = 20000;
-const OCTOPUS_SHOOT_DELAY_MS = 5000;
-const OCTOPUS_SHOOT_INTERVAL_MS = 3000;
-const OCTOPUS_SPAWN_CHECK_INTERVAL_MS = 3000;
-const OCTOPUS_SPAWN_PROBABILITY = 1 / 3;
 const STINGRAY_LIFE = 60;
-const STINGRAY_SPEED = 80;
-const STINGRAY_AMPLITUDE = 25;
-const STINGRAY_WAVE_FREQUENCY = 0.5;
-const STINGRAY_SPAWN_INTERVAL_MS = 4000;
-const PROJECTILE_MAX_RANGE = Math.sqrt(VIEW_WIDTH ** 2 + VIEW_HEIGHT ** 2) / 2;
 const BAR_LABEL_WIDTH = 70;
 const BAR_X = 20 + BAR_LABEL_WIDTH;
 function shortId(uuid: string): string {
   return uuid.slice(0, 8);
-}
-
-function getLevelFromExperience(totalExperience: number): number {
-  if (totalExperience < XP_BASE_FOR_LEVEL_2) return 1;
-  return Math.floor(Math.log2(totalExperience / XP_BASE_FOR_LEVEL_2 + 1)) + 1;
 }
 
 function getExperienceProgressForCurrentLevel(totalExperience: number): { current: number; needed: number } {
@@ -121,7 +80,8 @@ export class GameScene extends Phaser.Scene {
   private moveTargetX: number | null = null;
   private moveTargetY: number | null = null;
   private readonly moveArrivalThreshold = 15;
-  private pratEntities: PratEntity[] = [];
+  private pratEntities = new Map<string, PratEntity>();
+  private pratCaptureRequestSent = new Set<string>();
   private score: number = 0;
   private scoreText!: Phaser.GameObjects.Text;
   private readonly boatSpeed = 200;
@@ -129,8 +89,6 @@ export class GameScene extends Phaser.Scene {
   private multiplayer!: MultiplayerManager;
   private remoteBoats = new Map<string, RemoteBoatData>();
   private isSceneActive = true;
-  private pratSpawnTimer: ReturnType<typeof setInterval> | null = null;
-  private nextPratId = 0;
   private lifeBar!: Phaser.GameObjects.Graphics;
   private experienceBar!: Phaser.GameObjects.Graphics;
   private sea!: Phaser.GameObjects.TileSprite;
@@ -144,23 +102,24 @@ export class GameScene extends Phaser.Scene {
   private killsOctopus = 0;
   private killsStingray = 0;
   private playerName: string | null = null;
-  private letterProjectiles: LetterProjectile[] = [];
-  private remoteProjectiles: LetterProjectile[] = [];
   private octopuses = new Map<string, OctopusEntity>();
-  private enemyProjectiles: LetterProjectile[] = [];
-  private nextOctopusId = 0;
   private octopusesEnabled = true;
-  private lastOctopusSpawnCheckTime = 0;
+  private stingraysEnabled = true;
+  /** Combat, prats, boats, and projectiles are driven by the Next game API (SSE + POST). */
+  private readonly authoritativeGameServer = true;
+  private lastMoveInputSentAt = 0;
+  private readonly serverMoveThrottleMs = 100;
+  private serverProjectileSprites = new Map<string, Phaser.GameObjects.Text>();
+  private processedEliminationIds = new Set<string>();
   private stingrays = new Map<string, StingrayEntity>();
-  private nextStingrayId = 0;
-  private lastStingraySpawnTime = 0;
 
   constructor() {
     super({ key: "GameScene" });
   }
 
-  init(data: { octopusesEnabled?: boolean; playerName?: string }): void {
+  init(data: { octopusesEnabled?: boolean; stingraysEnabled?: boolean; playerName?: string }): void {
     this.octopusesEnabled = data?.octopusesEnabled ?? true;
+    this.stingraysEnabled = data?.stingraysEnabled ?? true;
     this.playerName = data?.playerName ?? null;
   }
 
@@ -171,11 +130,6 @@ export class GameScene extends Phaser.Scene {
     this.sea.setOrigin(0.5);
 
     this.createWorldBorders();
-    if (this.octopusesEnabled) {
-      this.lastOctopusSpawnCheckTime = Date.now();
-    }
-    this.lastStingraySpawnTime = Date.now();
-
     this.input.on("pointerdown", this.onPointerDown, this);
     this.game.canvas.addEventListener("contextmenu", (event) => event.preventDefault());
 
@@ -184,28 +138,13 @@ export class GameScene extends Phaser.Scene {
         if (!this.isSceneActive) return;
         this.updateRemoteBoats(players);
       },
-      onPratCaptured: () => {},
-      onPlayerHit: (payload) => {
-        if (payload.targetId === this.multiplayer.getPlayerId()) {
-          const previousLife = this.life;
-          this.life = Math.max(0, this.life - payload.damage);
-          if (previousLife > 0 && this.life <= 0) {
-            this.multiplayer.broadcastPlayerEliminated(payload.attackerId, this.multiplayer.getPlayerId(), this.level);
-          }
-        }
-      },
-      onPlayerEliminated: (payload) => {
-        if (payload.attackerId === this.multiplayer.getPlayerId()) {
-          this.addExperience(payload.victimLevel * XP_PER_PLAYER_LEVEL);
-        }
-      },
-      onPlayerShot: (payload) => {
-        if (!this.isSceneActive) return;
-        this.spawnRemoteProjectiles(payload);
-      },
       onConnected: () => {
         if (!this.isSceneActive) return;
         this.updateMultiplayerStatus();
+      },
+      onGameStateUpdate: (state) => {
+        if (!this.isSceneActive) return;
+        this.applyServerGameState(state);
       },
       getLocalState: () => {
         if (!this.boat) {
@@ -222,7 +161,9 @@ export class GameScene extends Phaser.Scene {
         };
       },
     });
+    this.multiplayer.setUseSupabaseForRemoteBoatPositions(false);
     this.multiplayer.connect();
+    this.multiplayer.connectGameStream("default");
     if (!this.playerName) {
       this.playerName = this.multiplayer.getPlayerId();
     }
@@ -246,6 +187,14 @@ export class GameScene extends Phaser.Scene {
         }
       }
     }
+
+    void this.multiplayer.sendGameInput({
+      type: "SYNC_PROFILE",
+      timestamp: Date.now(),
+      experience: this.experience,
+      killsOctopus: this.killsOctopus,
+      killsStingray: this.killsStingray,
+    });
 
     this.boat = this.physics.add.sprite(0, 0, "boat");
     this.boat.setCollideWorldBounds(true);
@@ -287,9 +236,6 @@ export class GameScene extends Phaser.Scene {
     statusText.setPosition(this.scale.width - 20, 20);
 
     this.createLifeAndExperienceBars();
-
-    this.spawnInitialPrats();
-    this.startPratRespawn();
 
     this.updateMultiplayerStatus();
 
@@ -356,29 +302,23 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  private addExperience(amount: number): void {
-    const previousLevel = this.level;
-    this.experience += amount;
-    this.level = getLevelFromExperience(this.experience);
-    if (this.level > previousLevel) {
-      this.savePlayer();
-      const levelUpText = this.add
-        .text(this.scale.width / 2, this.scale.height / 2 - 50, `Niveau ${this.level} !`, {
-          fontSize: "32px",
-          fontStyle: "bold",
-          color: "#9b59b6",
-        })
-        .setOrigin(0.5)
-        .setScrollFactor(0)
-        .setDepth(100);
-      this.tweens.add({
-        targets: levelUpText,
-        alpha: 0,
-        y: levelUpText.y - 80,
-        duration: 1500,
-        onComplete: () => levelUpText.destroy(),
-      });
-    }
+  private showLevelUpMessage(newLevel: number): void {
+    const levelUpText = this.add
+      .text(this.scale.width / 2, this.scale.height / 2 - 50, `Niveau ${newLevel} !`, {
+        fontSize: "32px",
+        fontStyle: "bold",
+        color: "#9b59b6",
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(100);
+    this.tweens.add({
+      targets: levelUpText,
+      alpha: 0,
+      y: levelUpText.y - 80,
+      duration: 1500,
+      onComplete: () => levelUpText.destroy(),
+    });
   }
 
   private drawBar(
@@ -403,18 +343,16 @@ export class GameScene extends Phaser.Scene {
     this.savePlayer();
     this.input.off("pointerdown", this.onPointerDown, this);
     this.scale.off("resize", this.updateCameraZoom, this);
-    for (const projectile of this.letterProjectiles) {
-      projectile.text.destroy();
+    for (const text of this.serverProjectileSprites.values()) {
+      text.destroy();
     }
-    this.letterProjectiles = [];
-    for (const projectile of this.remoteProjectiles) {
-      projectile.text.destroy();
+    this.serverProjectileSprites.clear();
+    this.processedEliminationIds.clear();
+    for (const entity of this.pratEntities.values()) {
+      entity.text.destroy();
     }
-    this.remoteProjectiles = [];
-    for (const projectile of this.enemyProjectiles) {
-      projectile.text.destroy();
-    }
-    this.enemyProjectiles = [];
+    this.pratEntities.clear();
+    this.pratCaptureRequestSent.clear();
     for (const octopus of this.octopuses.values()) {
       octopus.sprite.destroy();
       octopus.lifeBar.destroy();
@@ -425,10 +363,6 @@ export class GameScene extends Phaser.Scene {
       stingray.lifeBar.destroy();
     }
     this.stingrays.clear();
-    if (this.pratSpawnTimer) {
-      clearInterval(this.pratSpawnTimer);
-      this.pratSpawnTimer = null;
-    }
     this.multiplayer.disconnect();
   }
 
@@ -500,144 +434,45 @@ export class GameScene extends Phaser.Scene {
 
     const startX = this.boat.x;
     const startY = this.boat.y;
-    const direction = normalizeDirection(
+    const ts = Date.now();
+    void this.multiplayer.sendGameInput({
+      type: "SHOOT",
+      timestamp: ts,
       startX,
       startY,
-      targetBoat.sprite.x,
-      targetBoat.sprite.y
-    );
-
-    PRAT_LETTERS.forEach((letter, index) => {
-      this.time.delayedCall(index * 80, () => {
-        if (!this.isSceneActive) return;
-        const text = this.add.text(startX, startY, letter, {
-          fontSize: "28px",
-          fontStyle: "bold",
-          color: "#000000",
-        });
-        text.setOrigin(0.5);
-        text.setDepth(8);
-
-        this.letterProjectiles.push({
-          text,
-          targetPlayerId,
-          targetOctopusId: null,
-          damage: LETTER_DAMAGE,
-          speed: LETTER_SPEED,
-          directionX: direction.x,
-          directionY: direction.y,
-          originX: startX,
-          originY: startY,
-        });
-      });
-    });
-
-    this.multiplayer.broadcastPlayerShot(
-      targetPlayerId,
-      startX,
-      startY,
-      direction.x,
-      direction.y
-    );
-  }
-
-  private spawnRemoteProjectiles(payload: PlayerShotPayload): void {
-    PRAT_LETTERS.forEach((letter, index) => {
-      this.time.delayedCall(index * 80, () => {
-        if (!this.isSceneActive) return;
-        const text = this.add.text(payload.startX, payload.startY, letter, {
-          fontSize: "28px",
-          fontStyle: "bold",
-          color: "#000000",
-        });
-        text.setOrigin(0.5);
-        text.setDepth(8);
-
-        this.remoteProjectiles.push({
-          text,
-          targetPlayerId: payload.targetId || null,
-          targetOctopusId: null,
-          damage: LETTER_DAMAGE,
-          speed: LETTER_SPEED,
-          directionX: payload.directionX,
-          directionY: payload.directionY,
-          originX: payload.startX,
-          originY: payload.startY,
-        });
-      });
+      targetX: targetBoat.sprite.x,
+      targetY: targetBoat.sprite.y,
     });
   }
 
   private fireLettersAtPosition(worldX: number, worldY: number): void {
     const startX = this.boat.x;
     const startY = this.boat.y;
-    const direction = normalizeDirection(startX, startY, worldX, worldY);
-
-    PRAT_LETTERS.forEach((letter, index) => {
-      this.time.delayedCall(index * 80, () => {
-        if (!this.isSceneActive) return;
-        const text = this.add.text(startX, startY, letter, {
-          fontSize: "28px",
-          fontStyle: "bold",
-          color: "#000000",
-        });
-        text.setOrigin(0.5);
-        text.setDepth(8);
-
-        this.letterProjectiles.push({
-          text,
-          targetPlayerId: null,
-          targetOctopusId: null,
-          damage: LETTER_DAMAGE,
-          speed: LETTER_SPEED,
-          directionX: direction.x,
-          directionY: direction.y,
-          originX: startX,
-          originY: startY,
-        });
-      });
+    const ts = Date.now();
+    void this.multiplayer.sendGameInput({
+      type: "SHOOT",
+      timestamp: ts,
+      startX,
+      startY,
+      targetX: worldX,
+      targetY: worldY,
     });
-
-    this.multiplayer.broadcastPlayerShot("", startX, startY, direction.x, direction.y);
   }
 
   private fireLettersAtOctopus(octopusId: string): void {
     if (!this.octopuses.has(octopusId)) return;
 
-    const startX = this.boat.x;
-    const startY = this.boat.y;
     const octopus = this.octopuses.get(octopusId);
     if (!octopus) return;
-    const direction = normalizeDirection(
-      startX,
-      startY,
-      octopus.sprite.x,
-      octopus.sprite.y
-    );
 
-    PRAT_LETTERS.forEach((letter, index) => {
-      this.time.delayedCall(index * 80, () => {
-        if (!this.isSceneActive) return;
-        const text = this.add.text(startX, startY, letter, {
-          fontSize: "28px",
-          fontStyle: "bold",
-          color: "#000000",
-        });
-        text.setOrigin(0.5);
-        text.setDepth(8);
-
-        this.letterProjectiles.push({
-          text,
-          targetPlayerId: null,
-          targetOctopusId: octopusId,
-          damage: LETTER_DAMAGE,
-          speed: LETTER_SPEED,
-          directionX: direction.x,
-          directionY: direction.y,
-          originX: startX,
-          originY: startY,
-        });
-      });
+    const ts = Date.now();
+    void this.multiplayer.sendGameInput({
+      type: "SHOOT",
+      timestamp: ts,
+      startX: this.boat.x,
+      startY: this.boat.y,
+      targetX: octopus.sprite.x,
+      targetY: octopus.sprite.y,
     });
   }
 
@@ -662,18 +497,22 @@ export class GameScene extends Phaser.Scene {
         return;
       }
     }
-    for (const [octopusId, octopus] of this.octopuses) {
-      const distance = Phaser.Math.Distance.Between(worldX, worldY, octopus.sprite.x, octopus.sprite.y);
-      if (distance < clickRadius) {
-        this.fireLettersAtOctopus(octopusId);
-        return;
+    if (this.octopusesEnabled) {
+      for (const [octopusId, octopus] of this.octopuses) {
+        const distance = Phaser.Math.Distance.Between(worldX, worldY, octopus.sprite.x, octopus.sprite.y);
+        if (distance < clickRadius) {
+          this.fireLettersAtOctopus(octopusId);
+          return;
+        }
       }
     }
-    for (const [, stingray] of this.stingrays) {
-      const distance = Phaser.Math.Distance.Between(worldX, worldY, stingray.sprite.x, stingray.sprite.y);
-      if (distance < clickRadius) {
-        this.fireLettersAtPosition(stingray.sprite.x, stingray.sprite.y);
-        return;
+    if (this.stingraysEnabled) {
+      for (const [, stingray] of this.stingrays) {
+        const distance = Phaser.Math.Distance.Between(worldX, worldY, stingray.sprite.x, stingray.sprite.y);
+        if (distance < clickRadius) {
+          this.fireLettersAtPosition(stingray.sprite.x, stingray.sprite.y);
+          return;
+        }
       }
     }
     this.fireLettersAtPosition(worldX, worldY);
@@ -718,86 +557,6 @@ export class GameScene extends Phaser.Scene {
     return Phaser.Math.Clamp(value, -WORLD_SIZE + WORLD_MARGIN, WORLD_SIZE - WORLD_MARGIN);
   }
 
-  private spawnPratNearBoat(): void {
-    for (let count = 0; count < 3; count++) {
-      const activeCount = this.pratEntities.filter((entity) => !entity.captured).length;
-      if (activeCount >= MAX_PRATS) return;
-      const angle = Math.random() * Math.PI * 2;
-      const distance = PRAT_SPAWN_RADIUS + Math.random() * 400;
-      const x = this.clampToWorldBounds(this.boat.x + Math.cos(angle) * distance);
-      const y = this.clampToWorldBounds(this.boat.y + Math.sin(angle) * distance);
-      this.spawnPratAt(x, y);
-    }
-  }
-
-  private spawnPratAt(x: number, y: number): void {
-    const isHealLetter = Math.random() < HEAL_LETTER_PROBABILITY;
-
-    if (isHealLetter) {
-      const size = 28;
-      const id = `prat-${this.nextPratId++}`;
-      const text = this.add.text(x, y, "A", {
-        fontSize: `${size}px`,
-        fontStyle: "bold",
-        color: "#00aa00",
-      });
-      text.setOrigin(0.5);
-
-      this.pratEntities.push({
-        id,
-        text,
-        power: 0,
-        captured: false,
-        healAmount: Math.floor(MAX_LIFE * HEAL_PERCENT_OF_MAX),
-      });
-      return;
-    }
-
-    const pratWords = ["prat", "PRAT", "prat", "PrAt", "prat"];
-    const styles = [
-      { fontStyle: "normal", power: 1 },
-      { fontStyle: "bold", power: 2 },
-      { fontStyle: "italic", power: 2 },
-      { fontStyle: "bold italic", power: 3 },
-    ];
-    const style = styles[Math.floor(Math.random() * styles.length)];
-    const word = pratWords[Math.floor(Math.random() * pratWords.length)];
-    const size = 20 + Math.floor(Math.random() * 24);
-
-    const id = `prat-${this.nextPratId++}`;
-    const text = this.add.text(x, y, word, {
-      fontSize: `${size}px`,
-      fontStyle: style.fontStyle,
-      color: "#000000",
-    });
-    text.setOrigin(0.5);
-
-    this.pratEntities.push({
-      id,
-      text,
-      power: style.power,
-      captured: false,
-    });
-  }
-
-  private spawnInitialPrats(): void {
-    const min = -WORLD_SIZE + WORLD_MARGIN;
-    const max = WORLD_SIZE - WORLD_MARGIN;
-    for (let index = 0; index < 40; index++) {
-      const x = Phaser.Math.Between(min, max);
-      const y = Phaser.Math.Between(min, max);
-      this.spawnPratAt(x, y);
-    }
-  }
-
-  private startPratRespawn(): void {
-    this.pratSpawnTimer = setInterval(() => {
-      if (this.isSceneActive) {
-        this.spawnPratNearBoat();
-      }
-    }, PRAT_SPAWN_INTERVAL_MS);
-  }
-
   update(): void {
     if (!this.boat || !this.boatNameLabel) return;
     this.boatNameLabel.setPosition(this.boat.x, this.boat.y - 50);
@@ -815,248 +574,24 @@ export class GameScene extends Phaser.Scene {
     const levelText = this.children.getByName("level-text") as Phaser.GameObjects.Text;
     if (levelText) levelText.setText(`Niv. ${this.level}`);
 
-    this.updateLetterProjectiles();
-    this.updateRemoteProjectiles();
-    this.updateEnemyProjectiles();
-    if (this.octopusesEnabled) {
-      this.updateOctopuses();
+    if (this.authoritativeGameServer && this.boat) {
+      const now = Date.now();
+      if (now - this.lastMoveInputSentAt >= this.serverMoveThrottleMs) {
+        this.lastMoveInputSentAt = now;
+        void this.multiplayer.sendGameInput({
+          type: "MOVE",
+          timestamp: now,
+          x: this.boat.x,
+          y: this.boat.y,
+          rotation: this.boat.rotation,
+          name: this.playerName ?? undefined,
+        });
+      }
     }
     this.updateStingrays();
     this.updateBoatMovement();
 
     this.checkPratCapture();
-  }
-
-  private getProjectileTargetPosition(projectile: LetterProjectile): { x: number; y: number } | null {
-    if (projectile.targetPlayerId) {
-      const targetBoat = this.remoteBoats.get(projectile.targetPlayerId);
-      return targetBoat ? { x: targetBoat.sprite.x, y: targetBoat.sprite.y } : null;
-    }
-    if (projectile.targetOctopusId) {
-      const octopus = this.octopuses.get(projectile.targetOctopusId);
-      return octopus ? { x: octopus.sprite.x, y: octopus.sprite.y } : null;
-    }
-    return null;
-  }
-
-  private updateLetterProjectiles(): void {
-    const hitThreshold = 40;
-    for (let index = this.letterProjectiles.length - 1; index >= 0; index--) {
-      const projectile = this.letterProjectiles[index];
-      const traveled = Phaser.Math.Distance.Between(
-        projectile.originX,
-        projectile.originY,
-        projectile.text.x,
-        projectile.text.y
-      );
-      if (traveled >= PROJECTILE_MAX_RANGE) {
-        projectile.text.destroy();
-        this.letterProjectiles.splice(index, 1);
-        continue;
-      }
-      const target = this.getProjectileTargetPosition(projectile);
-      let hitTarget: { x: number; y: number; playerId?: string; octopusId?: string; stingrayId?: string } | null = null;
-      if (target) {
-        const distanceToTarget = Phaser.Math.Distance.Between(
-          projectile.text.x,
-          projectile.text.y,
-          target.x,
-          target.y
-        );
-        if (distanceToTarget < hitThreshold) {
-          hitTarget = {
-            x: target.x,
-            y: target.y,
-            playerId: projectile.targetPlayerId ?? undefined,
-            octopusId: projectile.targetOctopusId ?? undefined,
-          };
-        }
-      } else {
-        for (const [playerId, boatData] of this.remoteBoats) {
-          const distance = Phaser.Math.Distance.Between(
-            projectile.text.x,
-            projectile.text.y,
-            boatData.sprite.x,
-            boatData.sprite.y
-          );
-          if (distance < hitThreshold) {
-            hitTarget = { x: boatData.sprite.x, y: boatData.sprite.y, playerId };
-            break;
-          }
-        }
-        if (!hitTarget) {
-          for (const [octopusId, octopus] of this.octopuses) {
-            const distance = Phaser.Math.Distance.Between(
-              projectile.text.x,
-              projectile.text.y,
-              octopus.sprite.x,
-              octopus.sprite.y
-            );
-            if (distance < hitThreshold) {
-              hitTarget = { x: octopus.sprite.x, y: octopus.sprite.y, octopusId };
-              break;
-            }
-          }
-        }
-        if (!hitTarget) {
-          for (const [stingrayId, stingray] of this.stingrays) {
-            const distance = Phaser.Math.Distance.Between(
-              projectile.text.x,
-              projectile.text.y,
-              stingray.sprite.x,
-              stingray.sprite.y
-            );
-            if (distance < hitThreshold) {
-              hitTarget = { x: stingray.sprite.x, y: stingray.sprite.y, stingrayId };
-              break;
-            }
-          }
-        }
-      }
-      if (hitTarget) {
-        if (hitTarget.playerId) {
-          this.multiplayer.broadcastPlayerHit(hitTarget.playerId, projectile.damage);
-        } else if (hitTarget.octopusId) {
-          const octopus = this.octopuses.get(hitTarget.octopusId);
-          if (octopus) {
-            octopus.life -= projectile.damage;
-            if (octopus.life <= 0) {
-              this.killsOctopus++;
-              this.addExperience(XP_PER_OCTOPUS_OR_STINGRAY);
-              octopus.sprite.destroy();
-              octopus.lifeBar.destroy();
-              this.octopuses.delete(hitTarget.octopusId);
-            }
-          }
-        } else if (hitTarget.stingrayId) {
-          const stingray = this.stingrays.get(hitTarget.stingrayId);
-          if (stingray) {
-            stingray.life -= projectile.damage;
-            if (stingray.life <= 0) {
-              this.killsStingray++;
-              this.addExperience(XP_PER_OCTOPUS_OR_STINGRAY);
-              stingray.sprite.destroy();
-              stingray.lifeBar.destroy();
-              this.stingrays.delete(hitTarget.stingrayId);
-            }
-          }
-        }
-        const flash = this.add.circle(hitTarget.x, hitTarget.y, 30, CAPTURE_FLASH_COLOR, 0.5);
-        flash.setDepth(4);
-        this.tweens.add({
-          targets: flash,
-          alpha: 0,
-          scale: 2,
-          duration: 200,
-          onComplete: () => flash.destroy(),
-        });
-        projectile.text.destroy();
-        this.letterProjectiles.splice(index, 1);
-        continue;
-      }
-      const speed = (projectile.speed * this.game.loop.delta) / 1000;
-      projectile.text.x += projectile.directionX * speed;
-      projectile.text.y += projectile.directionY * speed;
-    }
-  }
-
-  private updateRemoteProjectiles(): void {
-    const hitThreshold = 40;
-    for (let index = this.remoteProjectiles.length - 1; index >= 0; index--) {
-      const projectile = this.remoteProjectiles[index];
-      const traveled = Phaser.Math.Distance.Between(
-        projectile.originX,
-        projectile.originY,
-        projectile.text.x,
-        projectile.text.y
-      );
-      if (traveled >= PROJECTILE_MAX_RANGE) {
-        projectile.text.destroy();
-        this.remoteProjectiles.splice(index, 1);
-        continue;
-      }
-      let targetX: number | null = null;
-      let targetY: number | null = null;
-      if (projectile.targetPlayerId === this.multiplayer.getPlayerId()) {
-        targetX = this.boat.x;
-        targetY = this.boat.y;
-      } else {
-        const targetBoat = this.remoteBoats.get(projectile.targetPlayerId!);
-        if (targetBoat) {
-          targetX = targetBoat.sprite.x;
-          targetY = targetBoat.sprite.y;
-        }
-      }
-      if (targetX !== null && targetY !== null) {
-        const distanceToTarget = Phaser.Math.Distance.Between(
-          projectile.text.x,
-          projectile.text.y,
-          targetX,
-          targetY
-        );
-        if (distanceToTarget < hitThreshold) {
-          const flash = this.add.circle(targetX, targetY, 30, CAPTURE_FLASH_COLOR, 0.5);
-          flash.setDepth(4);
-          this.tweens.add({
-            targets: flash,
-            alpha: 0,
-            scale: 2,
-            duration: 200,
-            onComplete: () => flash.destroy(),
-          });
-          projectile.text.destroy();
-          this.remoteProjectiles.splice(index, 1);
-          continue;
-        }
-      }
-      const speed = (projectile.speed * this.game.loop.delta) / 1000;
-      projectile.text.x += projectile.directionX * speed;
-      projectile.text.y += projectile.directionY * speed;
-    }
-  }
-
-  private updateEnemyProjectiles(): void {
-    const hitThreshold = 40;
-    for (let index = this.enemyProjectiles.length - 1; index >= 0; index--) {
-      const projectile = this.enemyProjectiles[index];
-      const traveled = Phaser.Math.Distance.Between(
-        projectile.originX,
-        projectile.originY,
-        projectile.text.x,
-        projectile.text.y
-      );
-      if (traveled >= PROJECTILE_MAX_RANGE) {
-        projectile.text.destroy();
-        this.enemyProjectiles.splice(index, 1);
-        continue;
-      }
-      const targetX = this.boat.x;
-      const targetY = this.boat.y;
-      const distance = Phaser.Math.Distance.Between(
-        projectile.text.x,
-        projectile.text.y,
-        targetX,
-        targetY
-      );
-      if (distance < hitThreshold) {
-        this.life = Math.max(0, this.life - projectile.damage);
-        const flash = this.add.circle(targetX, targetY, 30, CAPTURE_FLASH_COLOR, 0.5);
-        flash.setDepth(4);
-        this.tweens.add({
-          targets: flash,
-          alpha: 0,
-          scale: 2,
-          duration: 200,
-          onComplete: () => flash.destroy(),
-        });
-        projectile.text.destroy();
-        this.enemyProjectiles.splice(index, 1);
-      } else {
-        const speed = (projectile.speed * this.game.loop.delta) / 1000;
-        projectile.text.x += projectile.directionX * speed;
-        projectile.text.y += projectile.directionY * speed;
-      }
-    }
   }
 
   private updateCameraZoom(): void {
@@ -1066,252 +601,291 @@ export class GameScene extends Phaser.Scene {
     camera.setZoom(Math.min(zoomX, zoomY));
   }
 
-  private getVisibleBounds(): { left: number; right: number; top: number; bottom: number } {
-    const camera = this.cameras.main;
-    const margin = 60;
-    return {
-      left: camera.scrollX + margin,
-      right: camera.scrollX + VIEW_WIDTH - margin,
-      top: camera.scrollY + margin,
-      bottom: camera.scrollY + VIEW_HEIGHT - margin,
-    };
+  private applyServerGameState(state: SerializableGameState): void {
+    this.applyServerPlayersState(state);
+    this.applyServerPratsState(state);
+    this.applyServerOctopusState(state);
+    this.applyServerStingrayState(state);
+    this.applyServerProjectilesState(state);
+    this.applyServerCombatEvents(state);
   }
 
-  private isPlayerVisibleToOctopus(octopus: OctopusEntity): boolean {
-    const bounds = this.getVisibleBounds();
-    return (
-      octopus.sprite.x >= bounds.left &&
-      octopus.sprite.x <= bounds.right &&
-      octopus.sprite.y >= bounds.top &&
-      octopus.sprite.y <= bounds.bottom
-    );
+  /** Remote boats and local HUD fields from authoritative game state. */
+  private applyServerPlayersState(state: SerializableGameState): void {
+    const localPlayerId = this.multiplayer.getPlayerId();
+    const me = state.players?.[localPlayerId];
+    if (me) {
+      const previousLevel = this.level;
+      this.life = me.life ?? MAX_LIFE;
+      this.score = me.score ?? 0;
+      this.level = me.level ?? 1;
+      this.experience = me.experience ?? 0;
+      this.killsOctopus = me.killsOctopus ?? 0;
+      this.killsStingray = me.killsStingray ?? 0;
+      this.scoreText.setText(`Prat capturés: ${this.score}`);
+      if (this.level > previousLevel) {
+        this.savePlayer();
+        this.showLevelUpMessage(this.level);
+      }
+    }
+
+    const playersFromServer = new Map<string, RemotePlayer>();
+    for (const [playerId, playerData] of Object.entries(state.players ?? {})) {
+      if (playerId === localPlayerId) continue;
+      playersFromServer.set(playerId, {
+        id: playerId,
+        name: playerData.name,
+        x: playerData.x,
+        y: playerData.y,
+        rotation: playerData.rotation,
+        score: playerData.score ?? 0,
+        life: playerData.life ?? MAX_LIFE,
+        level: playerData.level ?? 1,
+        color: playerData.color ?? playerIdToColor(playerId),
+      });
+    }
+    this.updateRemoteBoats(playersFromServer);
   }
 
-  private spawnSingleOctopus(): void {
-    const id = `octopus-${this.nextOctopusId++}`;
-    const bounds = this.getVisibleBounds();
-    const minX = Math.max(bounds.left, -WORLD_SIZE + WORLD_MARGIN);
-    const maxX = Math.min(bounds.right, WORLD_SIZE - WORLD_MARGIN);
-    const minY = Math.max(bounds.top, -WORLD_SIZE + WORLD_MARGIN);
-    const maxY = Math.min(bounds.bottom, WORLD_SIZE - WORLD_MARGIN);
-    if (minX >= maxX || minY >= maxY) return;
-    const x = Phaser.Math.Between(minX, maxX);
-    const y = Phaser.Math.Between(minY, maxY);
-    const sprite = this.add.image(x, y, "octopus");
-    sprite.setScale(0.8);
-    sprite.setDepth(5);
-    sprite.setInteractive({ useHandCursor: true });
-    sprite.setInteractive({ useHandCursor: true });
-    const lifeBar = this.add.graphics().setDepth(7);
-    this.octopuses.set(id, {
-      id,
-      sprite,
-      lifeBar,
-      life: OCTOPUS_LIFE,
-      lastShotTime: 0,
-      spawnTime: Date.now(),
+  private applyServerPratsState(state: SerializableGameState): void {
+    try {
+      const pratsRecord = state.prats ?? {};
+      const seenIds = new Set<string>();
+      for (const [id, prat] of Object.entries(pratsRecord)) {
+        seenIds.add(id);
+        this.upsertPratVisual(id, prat);
+      }
+      for (const id of Array.from(this.pratEntities.keys())) {
+        if (!seenIds.has(id)) {
+          this.pratEntities.get(id)?.text.destroy();
+          this.pratEntities.delete(id);
+          this.pratCaptureRequestSent.delete(id);
+        }
+      }
+    } catch {
+      // Scene may be destroyed during apply
+    }
+  }
+
+  private upsertPratVisual(id: string, prat: PratState): void {
+    let entity = this.pratEntities.get(id);
+    if (!entity) {
+      const text = this.add.text(prat.x, prat.y, prat.word, {
+        fontSize: `${prat.fontSize}px`,
+        fontStyle: prat.fontStyle,
+        color: prat.color,
+      });
+      text.setOrigin(0.5);
+      text.setDepth(3);
+      entity = { id, text };
+      this.pratEntities.set(id, entity);
+      return;
+    }
+    entity.text.setPosition(prat.x, prat.y);
+    if (entity.text.text !== prat.word) {
+      entity.text.setText(prat.word);
+    }
+    entity.text.setStyle({
+      fontSize: `${prat.fontSize}px`,
+      fontStyle: prat.fontStyle,
+      color: prat.color,
     });
   }
 
-  private spawnSingleStingray(): void {
+  private applyServerProjectilesState(state: SerializableGameState): void {
+    try {
+      const seen = new Set<string>();
+      for (const [id, projectile] of Object.entries(state.projectiles)) {
+        seen.add(id);
+        const fromOctopus = projectile.shooterId.startsWith("octopus:");
+        const fontSize = fromOctopus ? "24px" : "28px";
+        let text = this.serverProjectileSprites.get(id);
+        if (!text) {
+          text = this.add.text(projectile.x, projectile.y, projectile.letter, {
+            fontSize,
+            fontStyle: "bold",
+            color: "#000000",
+          });
+          text.setOrigin(0.5);
+          text.setDepth(8);
+          this.serverProjectileSprites.set(id, text);
+        } else {
+          text.setPosition(projectile.x, projectile.y);
+          if (text.text !== projectile.letter) {
+            text.setText(projectile.letter);
+          }
+          text.setStyle({ fontSize, fontStyle: "bold", color: "#000000" });
+        }
+      }
+      for (const id of Array.from(this.serverProjectileSprites.keys())) {
+        if (!seen.has(id)) {
+          this.serverProjectileSprites.get(id)?.destroy();
+          this.serverProjectileSprites.delete(id);
+        }
+      }
+    } catch {
+      // Scene destroyed
+    }
+  }
+
+  private applyServerCombatEvents(state: SerializableGameState): void {
+    const maxTracked = 400;
+    const localId = this.multiplayer.getPlayerId();
+    for (const event of state.eliminationEvents ?? []) {
+      if (this.processedEliminationIds.has(event.id)) continue;
+      this.processedEliminationIds.add(event.id);
+      if (event.attackerId === localId) {
+        this.savePlayer();
+      }
+    }
+    this.trimStringIdSet(this.processedEliminationIds, maxTracked);
+  }
+
+  private trimStringIdSet(set: Set<string>, maxSize: number): void {
+    while (set.size > maxSize) {
+      const first = set.values().next().value;
+      if (first === undefined) break;
+      set.delete(first);
+    }
+  }
+
+  /** Syncs stingray entities from authoritative server state (SSE). */
+  private applyServerStingrayState(state: SerializableGameState): void {
     if (!this.textures.exists("stingray")) return;
-    const spawnX = -WORLD_SIZE + WORLD_MARGIN;
-    const baseY = Phaser.Math.Between(-WORLD_SIZE + WORLD_MARGIN, WORLD_SIZE - WORLD_MARGIN);
-    const id = `stingray-${this.nextStingrayId++}`;
-    const sprite = this.add.image(spawnX, baseY, "stingray");
-    sprite.setScale(1.2);
-    sprite.setDepth(4);
-    sprite.setInteractive({ useHandCursor: true });
-    const lifeBar = this.add.graphics().setDepth(6);
-    this.stingrays.set(id, {
-      id,
-      sprite,
-      lifeBar,
-      life: STINGRAY_LIFE,
-      baseY,
-      spawnTime: Date.now(),
-    });
+    if (!this.stingraysEnabled) {
+      for (const stingray of this.stingrays.values()) {
+        stingray.sprite.destroy();
+        stingray.lifeBar.destroy();
+      }
+      this.stingrays.clear();
+      return;
+    }
+    try {
+      const stingraysFromServer = state.stingrays ?? {};
+      const seenIds = new Set<string>();
+      for (const [id, ray] of Object.entries(stingraysFromServer)) {
+        seenIds.add(id);
+        let entity = this.stingrays.get(id);
+        if (!entity) {
+          const sprite = this.add.image(ray.x, ray.y, "stingray");
+          sprite.setScale(1.2);
+          sprite.setDepth(4);
+          sprite.setInteractive({ useHandCursor: true });
+          const lifeBar = this.add.graphics().setDepth(6);
+          entity = {
+            id,
+            sprite,
+            lifeBar,
+            life: ray.life,
+            baseY: ray.baseY,
+            spawnTime: ray.spawnTime,
+          };
+          this.stingrays.set(id, entity);
+        } else {
+          entity.sprite.setPosition(ray.x, ray.y);
+          entity.life = ray.life;
+          entity.baseY = ray.baseY;
+          entity.spawnTime = ray.spawnTime;
+        }
+        const maxLife = ray.maxLife > 0 ? ray.maxLife : STINGRAY_LIFE;
+        const lifeRatio = ray.life / maxLife;
+        entity.lifeBar.clear();
+        this.drawBar(entity.lifeBar, ray.x - 20, ray.y - 35, 40, 5, 0x333333, 0xff6600, lifeRatio);
+      }
+      for (const id of Array.from(this.stingrays.keys())) {
+        if (!seenIds.has(id)) {
+          const stingray = this.stingrays.get(id);
+          if (stingray) {
+            stingray.sprite.destroy();
+            stingray.lifeBar.destroy();
+          }
+          this.stingrays.delete(id);
+        }
+      }
+    } catch {
+      // Scene may be destroyed during apply
+    }
+  }
+
+  /** Syncs octopus entities from authoritative server state (SSE). */
+  private applyServerOctopusState(state: SerializableGameState): void {
+    if (!this.textures.exists("octopus")) return;
+    if (!this.octopusesEnabled) {
+      for (const octopus of this.octopuses.values()) {
+        octopus.sprite.destroy();
+        octopus.lifeBar.destroy();
+      }
+      this.octopuses.clear();
+      return;
+    }
+    try {
+      const seenIds = new Set<string>();
+      for (const [id, enemy] of Object.entries(state.enemies)) {
+        seenIds.add(id);
+
+        let entity = this.octopuses.get(id);
+        if (!entity) {
+          const sprite = this.add.image(enemy.x, enemy.y, "octopus");
+          sprite.setScale(0.8);
+          sprite.setDepth(5);
+          sprite.setInteractive({ useHandCursor: true });
+          const lifeBar = this.add.graphics().setDepth(7);
+          entity = {
+            id,
+            sprite,
+            lifeBar,
+            life: enemy.life,
+            lastShotTime: enemy.lastShotTime,
+            spawnTime: enemy.spawnTime,
+          };
+          this.octopuses.set(id, entity);
+        } else {
+          entity.sprite.setPosition(enemy.x, enemy.y);
+          entity.life = enemy.life;
+          entity.lastShotTime = enemy.lastShotTime;
+          entity.spawnTime = enemy.spawnTime;
+        }
+
+        const maxLife = enemy.maxLife > 0 ? enemy.maxLife : OCTOPUS_LIFE;
+        const lifeRatio = enemy.life / maxLife;
+        entity.lifeBar.clear();
+        this.drawBar(entity.lifeBar, enemy.x - 25, enemy.y - 50, 50, 6, 0x333333, 0xff0000, lifeRatio);
+      }
+
+      for (const id of Array.from(this.octopuses.keys())) {
+        if (!seenIds.has(id)) {
+          const octopus = this.octopuses.get(id);
+          if (octopus) {
+            octopus.sprite.destroy();
+            octopus.lifeBar.destroy();
+          }
+          this.octopuses.delete(id);
+        }
+      }
+    } catch {
+      // Scene may be destroyed during apply
+    }
   }
 
   private updateStingrays(): void {
-    const now = Date.now();
-    const deltaSeconds = this.game.loop.delta / 1000;
-    const toRemove: string[] = [];
-
-    if (now - this.lastStingraySpawnTime >= STINGRAY_SPAWN_INTERVAL_MS) {
-      this.lastStingraySpawnTime = now;
-      this.spawnSingleStingray();
-    }
-
-    for (const stingray of this.stingrays.values()) {
-      stingray.sprite.x += STINGRAY_SPEED * deltaSeconds;
-      const elapsedSeconds = (now - stingray.spawnTime) / 1000;
-      stingray.sprite.y =
-        stingray.baseY +
-        STINGRAY_AMPLITUDE * Math.sin(2 * Math.PI * STINGRAY_WAVE_FREQUENCY * elapsedSeconds);
-
-      const lifeRatio = stingray.life / STINGRAY_LIFE;
-      stingray.lifeBar.clear();
-      this.drawBar(stingray.lifeBar, stingray.sprite.x - 20, stingray.sprite.y - 35, 40, 5, 0x333333, 0xff6600, lifeRatio);
-
-      if (stingray.sprite.x > WORLD_SIZE + 50 || stingray.life <= 0) {
-        toRemove.push(stingray.id);
-      }
-    }
-
-    for (const id of toRemove) {
-      const stingray = this.stingrays.get(id);
-      if (stingray) {
-        stingray.sprite.destroy();
-        stingray.lifeBar.destroy();
-        this.stingrays.delete(id);
-      }
-    }
-  }
-
-  private countOctopusesInVisibleArea(): number {
-    const bounds = this.getVisibleBounds();
-    let count = 0;
-    for (const octopus of this.octopuses.values()) {
-      if (
-        octopus.sprite.x >= bounds.left &&
-        octopus.sprite.x <= bounds.right &&
-        octopus.sprite.y >= bounds.top &&
-        octopus.sprite.y <= bounds.bottom
-      ) {
-        count++;
-      }
-    }
-    return count;
-  }
-
-  private removeOctopus(octopusId: string): void {
-    const octopus = this.octopuses.get(octopusId);
-    if (octopus) {
-      octopus.sprite.destroy();
-      octopus.lifeBar.destroy();
-      this.octopuses.delete(octopusId);
-    }
-  }
-
-  private updateOctopuses(): void {
-    const now = Date.now();
-    const bounds = this.getVisibleBounds();
-    const toRemove: string[] = [];
-
-    for (const octopus of this.octopuses.values()) {
-      const inView =
-        octopus.sprite.x >= bounds.left &&
-        octopus.sprite.x <= bounds.right &&
-        octopus.sprite.y >= bounds.top &&
-        octopus.sprite.y <= bounds.bottom;
-
-      if (!inView || now - octopus.spawnTime >= OCTOPUS_LIFETIME_MS) {
-        toRemove.push(octopus.id);
-        continue;
-      }
-
-      const lifeRatio = octopus.life / OCTOPUS_LIFE;
-      octopus.lifeBar.clear();
-      this.drawBar(octopus.lifeBar, octopus.sprite.x - 25, octopus.sprite.y - 50, 50, 6, 0x333333, 0xff0000, lifeRatio);
-
-      const canShoot =
-        now - octopus.spawnTime >= OCTOPUS_SHOOT_DELAY_MS &&
-        now - octopus.lastShotTime >= OCTOPUS_SHOOT_INTERVAL_MS;
-      if (canShoot) {
-        octopus.lastShotTime = now;
-        this.octopusShoot(octopus);
-      }
-    }
-
-    for (const id of toRemove) {
-      this.removeOctopus(id);
-    }
-
-    const visibleCount = this.countOctopusesInVisibleArea();
-    if (
-      visibleCount === 0 &&
-      now - this.lastOctopusSpawnCheckTime >= OCTOPUS_SPAWN_CHECK_INTERVAL_MS &&
-      Math.random() < OCTOPUS_SPAWN_PROBABILITY
-    ) {
-      this.lastOctopusSpawnCheckTime = now;
-      this.spawnSingleOctopus();
-    }
-  }
-
-  private octopusShoot(octopus: OctopusEntity): void {
-    const startX = octopus.sprite.x;
-    const startY = octopus.sprite.y;
-    const direction = normalizeDirection(startX, startY, this.boat.x, this.boat.y);
-
-    PRAT_LETTERS.forEach((letter, index) => {
-      this.time.delayedCall(index * 80, () => {
-        if (!this.isSceneActive || !this.octopuses.has(octopus.id)) return;
-        const text = this.add.text(startX, startY, letter, {
-          fontSize: "24px",
-          fontStyle: "bold",
-          color: "#000000",
-        });
-        text.setOrigin(0.5);
-        text.setDepth(8);
-
-        this.enemyProjectiles.push({
-          text,
-          targetPlayerId: null,
-          targetOctopusId: null,
-          damage: OCTOPUS_DAMAGE,
-          speed: LETTER_SPEED * 0.8,
-          directionX: direction.x,
-          directionY: direction.y,
-          originX: startX,
-          originY: startY,
-        });
-      });
-    });
+    // Stingray motion and spawn come from the game server via applyServerStingrayState.
   }
 
   private checkPratCapture(): void {
     const boatX = this.boat.x;
     const boatY = this.boat.y;
 
-    for (const entity of this.pratEntities) {
-      if (entity.captured) continue;
+    for (const [pratId, entity] of this.pratEntities) {
+      if (this.pratCaptureRequestSent.has(pratId)) continue;
 
-      const distance = Phaser.Math.Distance.Between(
-        boatX,
-        boatY,
-        entity.text.x,
-        entity.text.y
-      );
+      const distance = Phaser.Math.Distance.Between(boatX, boatY, entity.text.x, entity.text.y);
 
       if (distance < this.captureRadius) {
-        entity.captured = true;
-        if (entity.healAmount != null) {
-          this.life = Math.min(MAX_LIFE, this.life + entity.healAmount);
-        } else {
-          this.score += entity.power;
-          this.addExperience(XP_PER_PRAT);
-          this.scoreText.setText(`Prat capturés: ${this.score}`);
-        }
-
-        const flash = this.add.circle(entity.text.x, entity.text.y, 60, CAPTURE_FLASH_COLOR, 0.5);
-        flash.setDepth(4);
-        this.tweens.add({
-          targets: flash,
-          alpha: 0,
-          scale: 2,
-          duration: 400,
-          onComplete: () => flash.destroy(),
-        });
-
-        this.tweens.add({
-          targets: entity.text,
-          alpha: 0,
-          scale: 0,
-          duration: 300,
-          onComplete: () => {
-            entity.text.destroy();
-          },
+        this.pratCaptureRequestSent.add(pratId);
+        void this.multiplayer.sendGameInput({
+          type: "PRAT_CAPTURE",
+          timestamp: Date.now(),
+          pratId,
         });
       }
     }

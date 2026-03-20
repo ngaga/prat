@@ -4,7 +4,9 @@ import { MultiplayerManager, type RemotePlayer } from "../multiplayer/Multiplaye
 import type { PratState, SerializableGameState } from "@/lib/gameTypes";
 import {
   getLevelFromExperience,
+  HEAL_PERCENT_OF_MAX,
   MAX_LIFE,
+  PRAT_CAPTURE_RADIUS,
   XP_BASE_FOR_LEVEL_2,
   XP_MULTIPLIER_PER_LEVEL,
 } from "@/lib/gameBalance";
@@ -48,6 +50,8 @@ const OCTOPUS_LIFE = 80;
 const STINGRAY_LIFE = 60;
 const BAR_LABEL_WIDTH = 70;
 const BAR_X = 20 + BAR_LABEL_WIDTH;
+/** Max score delta treated as a single prat pickup (avoid full-screen burst on unrelated updates). */
+const SCORE_DELTA_PRAT_PICKUP_MAX = 4;
 function shortId(uuid: string): string {
   return uuid.slice(0, 8);
 }
@@ -85,7 +89,6 @@ export class GameScene extends Phaser.Scene {
   private score: number = 0;
   private scoreText!: Phaser.GameObjects.Text;
   private readonly boatSpeed = 200;
-  private readonly captureRadius = 80;
   private multiplayer!: MultiplayerManager;
   private remoteBoats = new Map<string, RemoteBoatData>();
   private isSceneActive = true;
@@ -112,6 +115,8 @@ export class GameScene extends Phaser.Scene {
   private serverProjectileSprites = new Map<string, Phaser.GameObjects.Text>();
   private processedEliminationIds = new Set<string>();
   private stingrays = new Map<string, StingrayEntity>();
+  /** After first SSE snapshot, local life/score deltas trigger damage and pickup VFX. */
+  private hudSyncedFromServer = false;
 
   constructor() {
     super({ key: "GameScene" });
@@ -615,9 +620,29 @@ export class GameScene extends Phaser.Scene {
     const localPlayerId = this.multiplayer.getPlayerId();
     const me = state.players?.[localPlayerId];
     if (me) {
+      const oldLife = this.life;
+      const oldScore = this.score;
+      const newLife = me.life ?? MAX_LIFE;
+      const newScore = me.score ?? 0;
+      const boat = this.boat;
+
+      if (this.hudSyncedFromServer && boat) {
+        if (newLife < oldLife) {
+          this.spawnDamageBurst(boat.x, boat.y);
+        }
+        const healBand = Math.ceil(MAX_LIFE * HEAL_PERCENT_OF_MAX) + 2;
+        if (newLife > oldLife && newLife - oldLife <= healBand) {
+          this.spawnPratPickupBurst(boat.x, boat.y, true);
+        }
+        if (newScore > oldScore && newScore - oldScore <= SCORE_DELTA_PRAT_PICKUP_MAX) {
+          this.spawnPratPickupBurst(boat.x, boat.y, false);
+        }
+      }
+      this.hudSyncedFromServer = true;
+
       const previousLevel = this.level;
-      this.life = me.life ?? MAX_LIFE;
-      this.score = me.score ?? 0;
+      this.life = newLife;
+      this.score = newScore;
       this.level = me.level ?? 1;
       this.experience = me.experience ?? 0;
       this.killsOctopus = me.killsOctopus ?? 0;
@@ -871,6 +896,42 @@ export class GameScene extends Phaser.Scene {
     // Stingray motion and spawn come from the game server via applyServerStingrayState.
   }
 
+  private spawnDamageBurst(worldX: number, worldY: number): void {
+    if (!this.isSceneActive) return;
+    try {
+      const flash = this.add.circle(worldX, worldY, 36, 0xff3333, 0.5);
+      flash.setDepth(12);
+      this.tweens.add({
+        targets: flash,
+        alpha: 0,
+        scale: 2.1,
+        duration: 220,
+        onComplete: () => flash.destroy(),
+      });
+    } catch {
+      // Scene tearing down
+    }
+  }
+
+  private spawnPratPickupBurst(worldX: number, worldY: number, isHeal: boolean): void {
+    if (!this.isSceneActive) return;
+    try {
+      const color = isHeal ? 0x00aa44 : 0x111111;
+      const alpha = isHeal ? 0.4 : 0.45;
+      const flash = this.add.circle(worldX, worldY, 58, color, alpha);
+      flash.setDepth(11);
+      this.tweens.add({
+        targets: flash,
+        alpha: 0,
+        scale: 2,
+        duration: isHeal ? 420 : 380,
+        onComplete: () => flash.destroy(),
+      });
+    } catch {
+      // Scene tearing down
+    }
+  }
+
   private checkPratCapture(): void {
     const boatX = this.boat.x;
     const boatY = this.boat.y;
@@ -880,12 +941,14 @@ export class GameScene extends Phaser.Scene {
 
       const distance = Phaser.Math.Distance.Between(boatX, boatY, entity.text.x, entity.text.y);
 
-      if (distance < this.captureRadius) {
+      if (distance < PRAT_CAPTURE_RADIUS) {
         this.pratCaptureRequestSent.add(pratId);
         void this.multiplayer.sendGameInput({
           type: "PRAT_CAPTURE",
           timestamp: Date.now(),
           pratId,
+          x: boatX,
+          y: boatY,
         });
       }
     }

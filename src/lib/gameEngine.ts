@@ -7,6 +7,7 @@ import {
   MAX_PRATS,
   OCTOPUS_PROJECTILE_DAMAGE,
   OCTOPUS_PROJECTILE_SPEED_FACTOR,
+  PRAT_CAPTURE_CLIENT_SERVER_MAX_OFFSET,
   PRAT_CAPTURE_RADIUS,
   PRAT_SPAWN_INTERVAL_MS,
   PRAT_SPAWN_RADIUS,
@@ -318,7 +319,26 @@ export class GameRoom {
     const playerState = this.players.get(playerId);
     const prat = this.prats.get(pratId);
     if (!playerState || !prat) return;
-    if (distance(playerState.x, playerState.y, prat.x, prat.y) > PRAT_CAPTURE_RADIUS) return;
+
+    const reportedX = input.x;
+    const reportedY = input.y;
+    let captureX = playerState.x;
+    let captureY = playerState.y;
+
+    if (reportedX !== undefined && reportedY !== undefined) {
+      if (distance(reportedX, reportedY, playerState.x, playerState.y) > PRAT_CAPTURE_CLIENT_SERVER_MAX_OFFSET) {
+        return;
+      }
+      if (distance(reportedX, reportedY, prat.x, prat.y) > PRAT_CAPTURE_RADIUS) {
+        return;
+      }
+      captureX = reportedX;
+      captureY = reportedY;
+    } else {
+      if (distance(playerState.x, playerState.y, prat.x, prat.y) > PRAT_CAPTURE_RADIUS) {
+        return;
+      }
+    }
 
     if (prat.isHeal) {
       const heal = prat.healAmount ?? 0;
@@ -328,6 +348,8 @@ export class GameRoom {
       playerState.experience = (playerState.experience ?? 0) + XP_PER_PRAT;
       playerState.level = getLevelFromExperience(playerState.experience);
     }
+    playerState.x = captureX;
+    playerState.y = captureY;
     this.prats.delete(pratId);
     this.players.set(playerId, playerState);
   }

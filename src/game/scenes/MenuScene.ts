@@ -43,6 +43,10 @@ export class MenuScene extends Phaser.Scene {
     const nameInputDom = this.add.dom(centerX, centerY + 50, nameInput);
     nameInputDom.pointerEvents = "auto";
 
+    this.time.delayedCall(0, () => {
+      nameInput.focus();
+    });
+
     const playButtonY = centerY + 110;
     const playButtonWidth = 200;
     const playButtonHeight = 56;

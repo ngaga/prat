@@ -824,7 +824,11 @@ export class GameScene extends Phaser.Scene {
           };
           this.stingrays.set(id, entity);
         } else {
+          const previousLife = entity.life;
           entity.sprite.setPosition(ray.x, ray.y);
+          if (ray.life < previousLife) {
+            this.spawnDamageBurst(ray.x, ray.y, previousLife - ray.life);
+          }
           entity.life = ray.life;
           entity.baseY = ray.baseY;
           entity.spawnTime = ray.spawnTime;
@@ -882,7 +886,11 @@ export class GameScene extends Phaser.Scene {
           };
           this.octopuses.set(id, entity);
         } else {
+          const previousLife = entity.life;
           entity.sprite.setPosition(enemy.x, enemy.y);
+          if (enemy.life < previousLife) {
+            this.spawnDamageBurst(enemy.x, enemy.y, previousLife - enemy.life);
+          }
           entity.life = enemy.life;
           entity.lastShotTime = enemy.lastShotTime;
           entity.spawnTime = enemy.spawnTime;

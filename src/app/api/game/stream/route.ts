@@ -1,6 +1,4 @@
-import { getGameEngine } from "@/lib/gameEngine";
-
-const STREAM_INTERVAL_MS = 50;
+import { GAME_LOOP_INTERVAL_MS, getGameEngine } from "@/lib/gameEngine";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -39,7 +37,7 @@ export async function GET(request: Request): Promise<Response> {
         controller.enqueue(encoder.encode(body));
       };
       send();
-      intervalId = setInterval(send, STREAM_INTERVAL_MS);
+      intervalId = setInterval(send, GAME_LOOP_INTERVAL_MS);
     },
     cancel() {
       cleanup();

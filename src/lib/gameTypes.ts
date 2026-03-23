@@ -83,6 +83,17 @@ export interface EliminationEvent {
   victimLevel: number;
 }
 
+/**
+ * One-shot per tick. Positive `damage` = projectile hit; negative = heal (e.g. prat heal letter).
+ * Life is still authoritative in `players`; this drives VFX only.
+ */
+export interface PlayerDamageEvent {
+  id: string;
+  targetPlayerId: string;
+  attackerId: string;
+  damage: number;
+}
+
 export interface SerializableGameState {
   timestamp: number;
   room: string;
@@ -91,7 +102,9 @@ export interface SerializableGameState {
   stingrays: Record<string, StingrayState>;
   prats: Record<string, PratState>;
   projectiles: Record<string, ProjectileState>;
-  /** One-shot events per SSE tick: apply XP for attacker client-side if needed; state.players already updated on server. */
+  /** Projectile hits this tick; use `damage` for feedback, not life deltas. */
+  damageEvents: PlayerDamageEvent[];
+  /** One-shot notifications (e.g. attacker feedback); life and XP for players are already in `players`. */
   eliminationEvents: EliminationEvent[];
   rewardEvents: RewardEvent[];
 }

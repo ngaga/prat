@@ -53,6 +53,7 @@ export async function POST(request: Request): Promise<Response> {
   const engine = getGameEngine();
   const room = engine.getRoom(roomId);
   const result = room.handlePlayerInput(playerId, input);
+  room.runSimulationTickIfDue(Date.now());
 
   return new Response(JSON.stringify({ ok: true, ...result }), {
     status: 200,

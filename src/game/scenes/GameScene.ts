@@ -4,7 +4,6 @@ import { MultiplayerManager, type RemotePlayer } from "../multiplayer/Multiplaye
 import type { PratState, SerializableGameState } from "@/lib/gameTypes";
 import {
   getLevelFromExperience,
-  HEAL_PERCENT_OF_MAX,
   MAX_LIFE,
   PRAT_CAPTURE_RADIUS,
   XP_BASE_FOR_LEVEL_2,
@@ -114,8 +113,9 @@ export class GameScene extends Phaser.Scene {
   private readonly serverMoveThrottleMs = 100;
   private serverProjectileSprites = new Map<string, Phaser.GameObjects.Text>();
   private processedEliminationIds = new Set<string>();
+  private processedDamageEventIds = new Set<string>();
   private stingrays = new Map<string, StingrayEntity>();
-  /** After first SSE snapshot, local life/score deltas trigger damage and pickup VFX. */
+  /** After first SSE snapshot, score delta triggers prat score pickup VFX (heal uses negative damage events). */
   private hudSyncedFromServer = false;
 
   constructor() {
@@ -168,7 +168,6 @@ export class GameScene extends Phaser.Scene {
     });
     this.multiplayer.setUseSupabaseForRemoteBoatPositions(false);
     this.multiplayer.connect();
-    this.multiplayer.connectGameStream("default");
     if (!this.playerName) {
       this.playerName = this.multiplayer.getPlayerId();
     }
@@ -220,6 +219,9 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.setBounds(-WORLD_SIZE, -WORLD_SIZE, WORLD_SIZE * 2, WORLD_SIZE * 2);
     this.updateCameraZoom();
     this.scale.on("resize", this.updateCameraZoom, this);
+
+    // Start SSE after the boat exists so damage VFX always has a world position (sprite or snapshot fallback).
+    this.multiplayer.connectGameStream("default");
 
     this.scoreText = this.add
       .text(0, 0, "Prat capturés: 0", {
@@ -353,6 +355,7 @@ export class GameScene extends Phaser.Scene {
     }
     this.serverProjectileSprites.clear();
     this.processedEliminationIds.clear();
+    this.processedDamageEventIds.clear();
     for (const entity of this.pratEntities.values()) {
       entity.text.destroy();
     }
@@ -620,20 +623,12 @@ export class GameScene extends Phaser.Scene {
     const localPlayerId = this.multiplayer.getPlayerId();
     const me = state.players?.[localPlayerId];
     if (me) {
-      const oldLife = this.life;
       const oldScore = this.score;
       const newLife = me.life ?? MAX_LIFE;
       const newScore = me.score ?? 0;
       const boat = this.boat;
 
       if (this.hudSyncedFromServer && boat) {
-        if (newLife < oldLife) {
-          this.spawnDamageBurst(boat.x, boat.y);
-        }
-        const healBand = Math.ceil(MAX_LIFE * HEAL_PERCENT_OF_MAX) + 2;
-        if (newLife > oldLife && newLife - oldLife <= healBand) {
-          this.spawnPratPickupBurst(boat.x, boat.y, true);
-        }
         if (newScore > oldScore && newScore - oldScore <= SCORE_DELTA_PRAT_PICKUP_MAX) {
           this.spawnPratPickupBurst(boat.x, boat.y, false);
         }
@@ -756,6 +751,28 @@ export class GameScene extends Phaser.Scene {
   private applyServerCombatEvents(state: SerializableGameState): void {
     const maxTracked = 400;
     const localId = this.multiplayer.getPlayerId();
+    const localFromState = state.players?.[localId];
+
+    for (const event of state.damageEvents ?? []) {
+      if (this.processedDamageEventIds.has(event.id)) continue;
+      if (event.targetPlayerId !== localId) {
+        this.processedDamageEventIds.add(event.id);
+        continue;
+      }
+      // Same coordinate fallback as prat pickup bursts (boat + server); avoid skipping the event
+      // when one source is missing (would drop one-shot damageEvents forever).
+      const worldX = this.boat?.x ?? localFromState?.x ?? 0;
+      const worldY = this.boat?.y ?? localFromState?.y ?? 0;
+      this.processedDamageEventIds.add(event.id);
+      const damageAmount = Number(event.damage);
+      if (damageAmount > 0) {
+        this.spawnDamageBurst(worldX, worldY, damageAmount);
+      } else if (damageAmount < 0) {
+        this.spawnPratPickupBurst(worldX, worldY, true);
+      }
+    }
+    this.trimStringIdSet(this.processedDamageEventIds, maxTracked);
+
     for (const event of state.eliminationEvents ?? []) {
       if (this.processedEliminationIds.has(event.id)) continue;
       this.processedEliminationIds.add(event.id);
@@ -896,16 +913,18 @@ export class GameScene extends Phaser.Scene {
     // Stingray motion and spawn come from the game server via applyServerStingrayState.
   }
 
-  private spawnDamageBurst(worldX: number, worldY: number): void {
+  private spawnDamageBurst(worldX: number, worldY: number, damage: number): void {
     if (!this.isSceneActive) return;
     try {
-      const flash = this.add.circle(worldX, worldY, 36, 0xff3333, 0.5);
+      // Match prat pickup burst size and duration so the red hit feedback is equally visible.
+      const radius = 52 + Math.min(24, damage * 1.2);
+      const flash = this.add.circle(worldX, worldY, radius, 0xff2222, 0.48);
       flash.setDepth(12);
       this.tweens.add({
         targets: flash,
         alpha: 0,
-        scale: 2.1,
-        duration: 220,
+        scale: 2,
+        duration: 360 + Math.min(80, damage * 3),
         onComplete: () => flash.destroy(),
       });
     } catch {

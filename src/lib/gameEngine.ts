@@ -25,6 +25,7 @@ import type {
   EliminationEvent,
   EnemyState,
   PlayerInput,
+  PlayerDamageEvent,
   PlayerState,
   PratState,
   ProjectileState,
@@ -32,8 +33,8 @@ import type {
   StingrayState,
 } from "@/lib/gameTypes";
 
-/** Server tick rate: 20 FPS */
-const GAME_LOOP_INTERVAL_MS = 50;
+/** Server tick rate: 20 FPS (must match SSE stream interval so getState runs one tick before draining events) */
+export const GAME_LOOP_INTERVAL_MS = 50;
 
 const WORLD_SIZE = 2000;
 const WORLD_MARGIN = 50;
@@ -145,7 +146,9 @@ export class GameRoom {
   private lastStingraySpawnTime = 0;
   private lastPratSpawnTime = 0;
   private emptySince: number | null = null;
-  private loopHandle: ReturnType<typeof setInterval> | null = null;
+  /** Simulation is advanced here and in runSimulationTickIfDue, not on a separate timer (avoids racing getState). */
+  private lastSimulationTime = 0;
+  private pendingDamage: PlayerDamageEvent[] = [];
   private pendingEliminations: EliminationEvent[] = [];
 
   constructor(roomId: string) {
@@ -155,6 +158,17 @@ export class GameRoom {
     this.lastStingraySpawnTime = now;
     this.lastPratSpawnTime = now;
     this.spawnInitialPrats();
+    this.lastSimulationTime = Date.now() - GAME_LOOP_INTERVAL_MS;
+  }
+
+  /**
+   * Runs at most one simulation step per GAME_LOOP_INTERVAL_MS so multiple SSE clients do not double the tick rate.
+   * Call before reading pendingDamage in getState so damage events and player life stay in sync.
+   */
+  runSimulationTickIfDue(now: number): void {
+    if (now - this.lastSimulationTime < GAME_LOOP_INTERVAL_MS) return;
+    this.update();
+    this.lastSimulationTime = now;
   }
 
   private defaultPlayer(playerId: string): PlayerState {
@@ -236,15 +250,11 @@ export class GameRoom {
   }
 
   startLoop(): void {
-    if (this.loopHandle) return;
-    this.loopHandle = setInterval(() => this.update(), GAME_LOOP_INTERVAL_MS);
+    // Simulation is driven by getState (SSE) and runSimulationTickIfDue (after input).
   }
 
   stopLoop(): void {
-    if (this.loopHandle) {
-      clearInterval(this.loopHandle);
-      this.loopHandle = null;
-    }
+    // No background interval; kept for GameEngine maintenance API.
   }
 
   touchPlayer(playerId: string): void {
@@ -343,6 +353,12 @@ export class GameRoom {
     if (prat.isHeal) {
       const heal = prat.healAmount ?? 0;
       playerState.life = Math.min(MAX_LIFE, (playerState.life ?? MAX_LIFE) + heal);
+      this.pendingDamage.push({
+        id: `dmg-${randomEventSuffix()}`,
+        targetPlayerId: playerId,
+        attackerId: "prat",
+        damage: -heal,
+      });
     } else {
       playerState.score = (playerState.score ?? 0) + prat.power;
       playerState.experience = (playerState.experience ?? 0) + XP_PER_PRAT;
@@ -600,6 +616,12 @@ export class GameRoom {
       if (playerId === projectile.shooterId) continue;
       if (distance(projectile.x, projectile.y, playerState.x, playerState.y) < PROJECTILE_HIT_RADIUS) {
         const previousLife = playerState.life ?? MAX_LIFE;
+        this.pendingDamage.push({
+          id: `dmg-${randomEventSuffix()}`,
+          targetPlayerId: playerId,
+          attackerId: projectile.shooterId,
+          damage: projectile.damage,
+        });
         playerState.life = Math.max(0, previousLife - projectile.damage);
         this.projectiles.delete(projectileId);
 
@@ -645,6 +667,9 @@ export class GameRoom {
   }
 
   getState(): SerializableGameState {
+    this.runSimulationTickIfDue(Date.now());
+    const damageEvents = [...this.pendingDamage];
+    this.pendingDamage.length = 0;
     const eliminationEvents = [...this.pendingEliminations];
     this.pendingEliminations.length = 0;
 
@@ -685,6 +710,7 @@ export class GameRoom {
       stingrays: stingraysRecord,
       prats: pratsRecord,
       projectiles: projectilesRecord,
+      damageEvents,
       eliminationEvents,
       rewardEvents: [],
     };

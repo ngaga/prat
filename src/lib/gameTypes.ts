@@ -39,6 +39,10 @@ export interface PlayerState {
   killsOctopus?: number;
   killsStingray?: number;
   color?: number;
+  /** Dead players respawn as ghosts until they capture enough word prats. */
+  isGhost?: boolean;
+  /** Progress toward leaving ghost mode (0 .. GHOST_PRATS_TO_LEAVE). */
+  ghostPratsCaptured?: number;
 }
 
 export interface EnemyState {

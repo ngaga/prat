@@ -16,6 +16,8 @@ export interface RemotePlayer {
   life: number;
   level: number;
   color: number;
+  isGhost?: boolean;
+  ghostPratsCaptured?: number;
 }
 
 export interface MultiplayerCallbacks {

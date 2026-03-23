@@ -56,7 +56,8 @@ export class BootScene extends Phaser.Scene {
     stingrayRenderTexture.destroy();
 
     const boatGraphics = this.add.graphics();
-    boatGraphics.fillStyle(0x000000, 1);
+    // White base so tint can produce a black silhouette (normal) or white ghost (clear tint), like dark mode.
+    boatGraphics.fillStyle(0xffffff, 1);
     boatGraphics.fillTriangle(40, 0, 0, 30, 80, 30);
     boatGraphics.fillRect(35, 30, 10, 40);
     boatGraphics.fillTriangle(45, 30, 45, 0, 55, 15);

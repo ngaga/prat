@@ -4,6 +4,7 @@ import { MultiplayerManager, type RemotePlayer } from "../multiplayer/Multiplaye
 import type { PratState, SerializableGameState } from "@/lib/gameTypes";
 import {
   getLevelFromExperience,
+  GHOST_PRATS_TO_LEAVE,
   MAX_LIFE,
   PRAT_CAPTURE_RADIUS,
   XP_BASE_FOR_LEVEL_2,
@@ -61,6 +62,8 @@ const BAR_LABEL_WIDTH = 70;
 const BAR_X = 20 + BAR_LABEL_WIDTH;
 /** Max score delta treated as a single prat pickup (avoid full-screen burst on unrelated updates). */
 const SCORE_DELTA_PRAT_PICKUP_MAX = 4;
+/** Black tint on white boat texture (normal appearance). */
+const BOAT_SILHOUETTE_TINT = 0x000000;
 function shortId(uuid: string): string {
   return uuid.slice(0, 8);
 }
@@ -128,6 +131,14 @@ export class GameScene extends Phaser.Scene {
   private stingrays = new Map<string, StingrayEntity>();
   /** After first SSE snapshot, score delta triggers prat score pickup VFX (heal uses negative damage events). */
   private hudSyncedFromServer = false;
+  private localIsGhost = false;
+  private ghostHudText: Phaser.GameObjects.Text | null = null;
+  /** Full-screen color inversion when the local player is a ghost (sea, prats, enemies, boats). WebGL only. */
+  private ghostCameraColorMatrixFx: Phaser.FX.Controller | null = null;
+  /** True only when the camera negative effect was added successfully (affects boat tint vs clear tint). */
+  private ghostCameraInversionActive = false;
+  /** When the local player is alive, ghost remote boats use per-sprite inversion (camera is off). */
+  private remoteBoatGhostFx = new WeakMap<Phaser.GameObjects.Image, Phaser.FX.Controller>();
 
   constructor() {
     super({ key: "GameScene" });
@@ -222,6 +233,7 @@ export class GameScene extends Phaser.Scene {
     this.boat = this.physics.add.sprite(0, 0, "boat");
     this.boat.setCollideWorldBounds(true);
     this.boat.setScale(0.5);
+    this.boat.setTint(BOAT_SILHOUETTE_TINT);
 
     const displayName =
       this.playerName && this.playerName.length <= MAX_PLAYER_NAME_LENGTH
@@ -250,6 +262,15 @@ export class GameScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setOrigin(0, 0)
       .setPosition(20, 20);
+
+    this.ghostHudText = this.add
+      .text(20, 48, "", {
+        fontSize: "14px",
+        color: "#444",
+      })
+      .setScrollFactor(0)
+      .setOrigin(0, 0)
+      .setVisible(false);
 
     const statusText = this.add
       .text(0, 0, "", {
@@ -392,6 +413,120 @@ export class GameScene extends Phaser.Scene {
     }
     this.stingrays.clear();
     this.multiplayer.disconnect();
+    this.setLocalGhostCameraInversion(false);
+    for (const [, boatData] of this.remoteBoats) {
+      const fx = this.remoteBoatGhostFx.get(boatData.sprite);
+      if (fx) {
+        try {
+          boatData.sprite.postFX.remove(fx);
+        } catch {
+          // Scene tearing down
+        }
+        this.remoteBoatGhostFx.delete(boatData.sprite);
+      }
+    }
+    this.ghostHudText?.destroy();
+    this.ghostHudText = null;
+  }
+
+  /**
+   * Inverts the whole game view for the local ghost (WebGL).
+   * Boat uses white texture + black tint so the inverted result reads as a white silhouette.
+   */
+  private setLocalGhostCameraInversion(enabled: boolean): void {
+    if (enabled) {
+      if (this.ghostCameraColorMatrixFx) return;
+      try {
+        const camera = this.cameras.main;
+        if (camera.postFX == null) {
+          camera.initPostPipeline();
+        }
+        const colorMatrix = camera.postFX.addColorMatrix();
+        colorMatrix.negative();
+        this.ghostCameraColorMatrixFx = colorMatrix as unknown as Phaser.FX.Controller;
+        this.ghostCameraInversionActive = true;
+      } catch {
+        this.ghostCameraInversionActive = false;
+        // Canvas renderer or post pipelines unavailable
+      }
+    } else {
+      this.ghostCameraInversionActive = false;
+      if (this.ghostCameraColorMatrixFx) {
+        try {
+          this.cameras.main.postFX.remove(this.ghostCameraColorMatrixFx);
+        } catch {
+          // ignore
+        }
+        this.ghostCameraColorMatrixFx = null;
+      }
+    }
+  }
+
+  /**
+   * White texture: black tint = normal boat; ghost with camera invert = black tint (reads white after invert);
+   * ghost without camera invert = clear tint (white boat), dark-mode style.
+   */
+  private applyLocalBoatGhostVisual(sprite: Phaser.Physics.Arcade.Sprite, isGhost: boolean): void {
+    if (isGhost) {
+      if (this.ghostCameraInversionActive) {
+        sprite.setTint(BOAT_SILHOUETTE_TINT);
+      } else {
+        sprite.clearTint();
+      }
+    } else {
+      sprite.setTint(BOAT_SILHOUETTE_TINT);
+    }
+  }
+
+  private applyRemoteBoatGhostAppearance(sprite: Phaser.GameObjects.Image, remotePlayerIsGhost: boolean): void {
+    const existingFx = this.remoteBoatGhostFx.get(sprite);
+    if (this.localIsGhost) {
+      if (existingFx) {
+        try {
+          sprite.postFX.remove(existingFx);
+        } catch {
+          // ignore
+        }
+        this.remoteBoatGhostFx.delete(sprite);
+      }
+      if (this.ghostCameraInversionActive) {
+        sprite.setTint(BOAT_SILHOUETTE_TINT);
+      } else if (remotePlayerIsGhost) {
+        sprite.clearTint();
+      } else {
+        sprite.setTint(BOAT_SILHOUETTE_TINT);
+      }
+      return;
+    }
+    if (remotePlayerIsGhost) {
+      if (!existingFx) {
+        try {
+          if (sprite.postFX == null) {
+            sprite.initPostPipeline();
+          }
+          const colorMatrix = sprite.postFX.addColorMatrix();
+          colorMatrix.negative();
+          this.remoteBoatGhostFx.set(sprite, colorMatrix as unknown as Phaser.FX.Controller);
+        } catch {
+          // WebGL post FX unavailable: white ghost boat without per-sprite invert
+        }
+      }
+      if (this.remoteBoatGhostFx.has(sprite)) {
+        sprite.setTint(BOAT_SILHOUETTE_TINT);
+      } else {
+        sprite.clearTint();
+      }
+    } else {
+      if (existingFx) {
+        try {
+          sprite.postFX.remove(existingFx);
+        } catch {
+          // ignore
+        }
+        this.remoteBoatGhostFx.delete(sprite);
+      }
+      sprite.setTint(BOAT_SILHOUETTE_TINT);
+    }
   }
 
   private updateMultiplayerStatus(): void {
@@ -402,7 +537,7 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private updateRemoteBoats(players: Map<string, { id: string; name?: string; x: number; y: number; rotation: number; life: number }>): void {
+  private updateRemoteBoats(players: Map<string, RemotePlayer>): void {
     if (!this.isSceneActive || !this.add) return;
     try {
       if (this.scene == null || !this.scene.isActive()) return;
@@ -433,6 +568,7 @@ export class GameScene extends Phaser.Scene {
         }
         boatData.sprite.setPosition(data.x, data.y);
         boatData.sprite.setRotation(data.rotation);
+        this.applyRemoteBoatGhostAppearance(boatData.sprite, data.isGhost ?? false);
         const displayName = data.name && data.name.length <= MAX_PLAYER_NAME_LENGTH ? data.name : shortId(playerId);
         boatData.nameLabel.setText(displayName);
         boatData.nameLabel.setPosition(data.x, data.y - 50);
@@ -457,6 +593,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private fireLettersAtTarget(targetPlayerId: string): void {
+    if (this.localIsGhost) return;
     const targetBoat = this.remoteBoats.get(targetPlayerId);
     if (!targetBoat) return;
 
@@ -474,6 +611,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private fireLettersAtPosition(worldX: number, worldY: number): void {
+    if (this.localIsGhost) return;
     const startX = this.boat.x;
     const startY = this.boat.y;
     const ts = Date.now();
@@ -488,6 +626,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private fireLettersAtOctopus(octopusId: string): void {
+    if (this.localIsGhost) return;
     if (!this.octopuses.has(octopusId)) return;
 
     const octopus = this.octopuses.get(octopusId);
@@ -517,6 +656,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private handleLeftClick(worldX: number, worldY: number): void {
+    if (this.localIsGhost) return;
     const clickRadius = CLICK_TARGET_RADIUS;
     for (const [playerId, boatData] of this.remoteBoats) {
       const distance = Phaser.Math.Distance.Between(worldX, worldY, boatData.sprite.x, boatData.sprite.y);
@@ -647,8 +787,9 @@ export class GameScene extends Phaser.Scene {
       const newLife = me.life ?? MAX_LIFE;
       const newScore = me.score ?? 0;
       const boat = this.boat;
+      const wasGhost = this.localIsGhost;
 
-      if (this.hudSyncedFromServer && boat) {
+      if (this.hudSyncedFromServer && boat && !me.isGhost) {
         if (newScore > oldScore && newScore - oldScore <= SCORE_DELTA_PRAT_PICKUP_MAX) {
           this.spawnPratPickupBurst(boat.x, boat.y, false);
         }
@@ -663,9 +804,34 @@ export class GameScene extends Phaser.Scene {
       this.killsOctopus = me.killsOctopus ?? 0;
       this.killsStingray = me.killsStingray ?? 0;
       this.scoreText.setText(`Prat capturés: ${this.score}`);
+      this.localIsGhost = me.isGhost ?? false;
+      this.setLocalGhostCameraInversion(this.localIsGhost);
+      if (this.ghostHudText) {
+        if (me.isGhost) {
+          this.ghostHudText.setText(
+            `Ghost: ${me.ghostPratsCaptured ?? 0} / ${GHOST_PRATS_TO_LEAVE} prats to revive`
+          );
+          this.ghostHudText.setVisible(true);
+        } else {
+          this.ghostHudText.setVisible(false);
+        }
+      }
+      if (wasGhost && !this.localIsGhost) {
+        void this.savePlayer();
+      }
       if (this.level > previousLevel) {
-        this.savePlayer();
+        void this.savePlayer();
         this.showLevelUpMessage(this.level);
+      }
+
+      if (boat) {
+        const serverX = simulationToPhaserPixels(me.x);
+        const serverY = simulationToPhaserPixels(me.y);
+        const dist = Phaser.Math.Distance.Between(boat.x, boat.y, serverX, serverY);
+        if (dist > simulationToPhaserPixels(120)) {
+          boat.setPosition(serverX, serverY);
+        }
+        this.applyLocalBoatGhostVisual(boat, me.isGhost ?? false);
       }
     }
 
@@ -682,6 +848,8 @@ export class GameScene extends Phaser.Scene {
         life: playerData.life ?? MAX_LIFE,
         level: playerData.level ?? 1,
         color: playerData.color ?? playerIdToColor(playerId),
+        isGhost: playerData.isGhost,
+        ghostPratsCaptured: playerData.ghostPratsCaptured,
       });
     }
     this.updateRemoteBoats(playersFromServer);

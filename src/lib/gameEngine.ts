@@ -3,6 +3,7 @@ import {
   HEAL_LETTER_PROBABILITY,
   HEAL_PERCENT_OF_MAX,
   MAX_LIFE,
+  GHOST_PRATS_TO_LEAVE,
   MAX_PRATS,
   OCTOPUS_PROJECTILE_DAMAGE,
   OCTOPUS_PROJECTILE_MAX_RANGE,
@@ -96,6 +97,25 @@ function clampWorld(value: number): number {
   const min = -WORLD_SIZE + WORLD_MARGIN;
   const max = WORLD_SIZE - WORLD_MARGIN;
   return Math.min(max, Math.max(min, value));
+}
+
+/** Respawn near a random map corner, ~50 simulation units from each edge at that corner. */
+function randomCornerSpawn(): { x: number; y: number } {
+  const min = -WORLD_SIZE + WORLD_MARGIN;
+  const max = WORLD_SIZE - WORLD_MARGIN;
+  const inset = 50;
+  const corners = [
+    { x: min + inset, y: min + inset },
+    { x: max - inset, y: min + inset },
+    { x: min + inset, y: max - inset },
+    { x: max - inset, y: max - inset },
+  ];
+  const corner = corners[Math.floor(Math.random() * 4)]!;
+  const jitter = () => (Math.random() - 0.5) * 80;
+  return {
+    x: clampWorld(corner.x + jitter()),
+    y: clampWorld(corner.y + jitter()),
+  };
 }
 
 function nearestPlayer(enemyX: number, enemyY: number, players: Map<string, PlayerState>): PlayerState | null {
@@ -201,6 +221,8 @@ export class GameRoom {
       killsOctopus: 0,
       killsStingray: 0,
       color: playerIdToColor(playerId),
+      isGhost: false,
+      ghostPratsCaptured: 0,
     };
   }
 
@@ -307,6 +329,8 @@ export class GameRoom {
         y: input.y,
         rotation: input.rotation ?? previous.rotation,
         name: input.name ?? previous.name,
+        isGhost: previous.isGhost,
+        ghostPratsCaptured: previous.ghostPratsCaptured,
       });
       return {};
     }
@@ -315,6 +339,8 @@ export class GameRoom {
       this.players.set(playerId, {
         ...previous,
         rotation: input.rotation,
+        isGhost: previous.isGhost,
+        ghostPratsCaptured: previous.ghostPratsCaptured,
       });
       return {};
     }
@@ -328,6 +354,8 @@ export class GameRoom {
         level: getLevelFromExperience(experience),
         killsOctopus: input.killsOctopus ?? previous.killsOctopus ?? 0,
         killsStingray: input.killsStingray ?? previous.killsStingray ?? 0,
+        isGhost: previous.isGhost,
+        ghostPratsCaptured: previous.ghostPratsCaptured,
       });
       return {};
     }
@@ -336,7 +364,10 @@ export class GameRoom {
       return {};
     }
     if (input.type === "SHOOT") {
-      this.spawnPlayerSalvo(playerId, input);
+      const shooter = this.players.get(playerId);
+      if (!shooter?.isGhost) {
+        this.spawnPlayerSalvo(playerId, input);
+      }
     }
     return {};
   }
@@ -379,6 +410,14 @@ export class GameRoom {
         x: captureX,
         y: captureY,
       });
+    } else if (playerState.isGhost) {
+      const next = (playerState.ghostPratsCaptured ?? 0) + 1;
+      if (next >= GHOST_PRATS_TO_LEAVE) {
+        playerState.isGhost = false;
+        playerState.ghostPratsCaptured = 0;
+      } else {
+        playerState.ghostPratsCaptured = next;
+      }
     } else {
       playerState.score = (playerState.score ?? 0) + prat.power;
       playerState.experience = (playerState.experience ?? 0) + XP_PER_PRAT;
@@ -425,7 +464,7 @@ export class GameRoom {
 
   private spawnPlayerSalvo(playerId: string, input: PlayerInput): void {
     const shooter = this.players.get(playerId);
-    if (!shooter) return;
+    if (!shooter || shooter.isGhost) return;
     if (
       input.startX === undefined ||
       input.startY === undefined ||
@@ -613,7 +652,7 @@ export class GameRoom {
         if (enemy.life <= 0) {
           this.enemies.delete(enemyId);
           const shooter = this.players.get(projectile.shooterId);
-          if (shooter) {
+          if (shooter && !shooter.isGhost) {
             shooter.experience = (shooter.experience ?? 0) + XP_PER_OCTOPUS_OR_STINGRAY;
             shooter.killsOctopus = (shooter.killsOctopus ?? 0) + 1;
             shooter.level = getLevelFromExperience(shooter.experience);
@@ -647,7 +686,7 @@ export class GameRoom {
         if (stingray.life <= 0) {
           this.stingrays.delete(stingrayId);
           const shooter = this.players.get(projectile.shooterId);
-          if (shooter) {
+          if (shooter && !shooter.isGhost) {
             shooter.experience = (shooter.experience ?? 0) + XP_PER_OCTOPUS_OR_STINGRAY;
             shooter.killsStingray = (shooter.killsStingray ?? 0) + 1;
             shooter.level = getLevelFromExperience(shooter.experience);
@@ -691,9 +730,11 @@ export class GameRoom {
           const victimLevel = playerState.level ?? 1;
           const attacker = this.players.get(projectile.shooterId);
           if (attacker) {
-            attacker.experience = (attacker.experience ?? 0) + victimLevel * XP_PER_PLAYER_LEVEL;
-            attacker.level = getLevelFromExperience(attacker.experience);
-            this.players.set(projectile.shooterId, attacker);
+            if (!attacker.isGhost) {
+              attacker.experience = (attacker.experience ?? 0) + victimLevel * XP_PER_PLAYER_LEVEL;
+              attacker.level = getLevelFromExperience(attacker.experience);
+              this.players.set(projectile.shooterId, attacker);
+            }
             this.pendingEliminations.push({
               id: `elim-${randomEventSuffix()}`,
               victimId: playerId,
@@ -701,9 +742,12 @@ export class GameRoom {
               victimLevel,
             });
           }
+          const spawn = randomCornerSpawn();
           playerState.life = MAX_LIFE;
-          playerState.x = 0;
-          playerState.y = 0;
+          playerState.x = spawn.x;
+          playerState.y = spawn.y;
+          playerState.isGhost = true;
+          playerState.ghostPratsCaptured = 0;
         }
         this.players.set(playerId, playerState);
         return true;

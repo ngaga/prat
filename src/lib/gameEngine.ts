@@ -148,8 +148,15 @@ export class GameRoom {
   private emptySince: number | null = null;
   /** Simulation is advanced here and in runSimulationTickIfDue, not on a separate timer (avoids racing getState). */
   private lastSimulationTime = 0;
+  /** Filled during update() and tryPratCapture; flushed at end of update() into broadcast buffers. */
   private pendingDamage: PlayerDamageEvent[] = [];
   private pendingEliminations: EliminationEvent[] = [];
+  /**
+   * One batch per simulation tick, not drained per getState(), so multiple SSE clients see the same damageEvents.
+   * Cleared at the start of each update(); prat heal queued in pendingDamage is merged at end of update().
+   */
+  private damageEventsForBroadcast: PlayerDamageEvent[] = [];
+  private eliminationEventsForBroadcast: EliminationEvent[] = [];
 
   constructor(roomId: string) {
     this.roomId = roomId;
@@ -163,7 +170,7 @@ export class GameRoom {
 
   /**
    * Runs at most one simulation step per GAME_LOOP_INTERVAL_MS so multiple SSE clients do not double the tick rate.
-   * Call before reading pendingDamage in getState so damage events and player life stay in sync.
+   * getState() reads damageEventsForBroadcast (filled at end of update) so all stream connections get the same events.
    */
   runSimulationTickIfDue(now: number): void {
     if (now - this.lastSimulationTime < GAME_LOOP_INTERVAL_MS) return;
@@ -448,6 +455,8 @@ export class GameRoom {
 
   private update(): void {
     const now = Date.now();
+    this.damageEventsForBroadcast = [];
+    this.eliminationEventsForBroadcast = [];
     this.updateEnemiesAndSpawns(now);
     this.updateStingrays(now);
     this.spawnPratsNearPlayers(now);
@@ -455,6 +464,10 @@ export class GameRoom {
     if (this.players.size === 0 && this.emptySince === null) {
       this.emptySince = now;
     }
+    this.damageEventsForBroadcast.push(...this.pendingDamage);
+    this.pendingDamage.length = 0;
+    this.eliminationEventsForBroadcast.push(...this.pendingEliminations);
+    this.pendingEliminations.length = 0;
   }
 
   private updateEnemiesAndSpawns(now: number): void {
@@ -668,10 +681,9 @@ export class GameRoom {
 
   getState(): SerializableGameState {
     this.runSimulationTickIfDue(Date.now());
-    const damageEvents = [...this.pendingDamage];
-    this.pendingDamage.length = 0;
-    const eliminationEvents = [...this.pendingEliminations];
-    this.pendingEliminations.length = 0;
+    // Merge input-only events (e.g. prat heal) not yet flushed by update(), without draining per caller.
+    const damageEvents = [...this.damageEventsForBroadcast, ...this.pendingDamage];
+    const eliminationEvents = [...this.eliminationEventsForBroadcast, ...this.pendingEliminations];
 
     const playersRecord: Record<string, PlayerState> = {};
     for (const [id, state] of this.players) {

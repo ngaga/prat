@@ -1,6 +1,6 @@
 /**
- * World coordinate system.
- * 1 unit = 1 pixel (TILE_SIZE=1). Can be changed for tile-based logic.
+ * Legacy helper (unused elsewhere). Prefer simulationSpace + simulationToDisplay for coordinates.
+ * Kept as a neutral 1:1 pass-through; do not mix with display pixel assumptions.
  */
 export interface Vector2D {
   x: number;

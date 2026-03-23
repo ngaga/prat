@@ -1,4 +1,3 @@
-import { VIEW_HEIGHT, VIEW_WIDTH } from "@/lib/displayConstants";
 import {
   getLevelFromExperience,
   HEAL_LETTER_PROBABILITY,
@@ -6,6 +5,7 @@ import {
   MAX_LIFE,
   MAX_PRATS,
   OCTOPUS_PROJECTILE_DAMAGE,
+  OCTOPUS_PROJECTILE_MAX_RANGE,
   OCTOPUS_PROJECTILE_SPEED_FACTOR,
   PRAT_CAPTURE_CLIENT_SERVER_MAX_OFFSET,
   PRAT_CAPTURE_RADIUS,
@@ -15,6 +15,16 @@ import {
   XP_PER_PLAYER_LEVEL,
   XP_PER_PRAT,
 } from "@/lib/gameBalance";
+import {
+  LETTER_DAMAGE_SIMULATION_UNITS,
+  PLAYER_LETTER_SPEED_SIMULATION_UNITS_PER_SECOND,
+  PLAYER_PROJECTILE_MAX_TRAVEL_SIMULATION_UNITS,
+  PROJECTILE_HIT_RADIUS_SIMULATION_UNITS,
+  STINGRAY_AMPLITUDE_SIMULATION_UNITS,
+  STINGRAY_SPEED_SIMULATION_UNITS_PER_SECOND,
+  WORLD_HALF_EXTENT_SIMULATION_UNITS,
+  WORLD_MARGIN_SIMULATION_UNITS,
+} from "@/lib/simulationSpace";
 import { playerIdToColor } from "@/lib/playerColor";
 import {
   getOctopusesSpawnOnServer,
@@ -37,8 +47,8 @@ import type {
 /** Server tick rate: 20 FPS (must match SSE stream interval so getState runs one tick before draining events) */
 export const GAME_LOOP_INTERVAL_MS = 50;
 
-const WORLD_SIZE = 2000;
-const WORLD_MARGIN = 50;
+const WORLD_SIZE = WORLD_HALF_EXTENT_SIMULATION_UNITS;
+const WORLD_MARGIN = WORLD_MARGIN_SIMULATION_UNITS;
 const OCTOPUS_LIFE = 80;
 const OCTOPUS_LIFETIME_MS = 20_000;
 const OCTOPUS_SHOOT_DELAY_MS = 5000;
@@ -48,15 +58,13 @@ const OCTOPUS_SPAWN_PROBABILITY = 1 / 3;
 const MAX_OCTOPUSES_IN_WORLD = 8;
 const ROOM_EMPTY_CLEANUP_MS = 120_000;
 const STINGRAY_LIFE = 60;
-const STINGRAY_SPEED_PX_PER_SEC = 80;
-const STINGRAY_AMPLITUDE = 25;
 const STINGRAY_WAVE_FREQUENCY = 0.5;
 const STINGRAY_SPAWN_INTERVAL_MS = 4000;
 
-const LETTER_SPEED_PX_PER_SEC = 400;
-const LETTER_DAMAGE = 10;
-const PROJECTILE_HIT_RADIUS = 40;
-const PROJECTILE_MAX_RANGE = Math.sqrt(VIEW_WIDTH ** 2 + VIEW_HEIGHT ** 2) / 2;
+const LETTER_SPEED_SIMULATION_UNITS_PER_SECOND = PLAYER_LETTER_SPEED_SIMULATION_UNITS_PER_SECOND;
+const LETTER_DAMAGE = LETTER_DAMAGE_SIMULATION_UNITS;
+const PROJECTILE_HIT_RADIUS = PROJECTILE_HIT_RADIUS_SIMULATION_UNITS;
+const PROJECTILE_MAX_RANGE = PLAYER_PROJECTILE_MAX_TRAVEL_SIMULATION_UNITS;
 const PRAT_LETTERS = ["P", "R", "A", "T"];
 const PRAT_WORDS = ["prat", "PRAT", "prat", "PrAt", "prat"];
 const PRAT_STYLE_ROLLS: { fontStyle: string; power: number }[] = [
@@ -393,7 +401,7 @@ export class GameRoom {
     directionY /= length;
 
     const shooterId = octopusProjectileShooterId(enemy.id);
-    const speed = LETTER_SPEED_PX_PER_SEC * OCTOPUS_PROJECTILE_SPEED_FACTOR;
+    const speed = LETTER_SPEED_SIMULATION_UNITS_PER_SECOND * OCTOPUS_PROJECTILE_SPEED_FACTOR;
 
     for (let letterIndex = 0; letterIndex < PRAT_LETTERS.length; letterIndex++) {
       const id = `proj-${this.nextProjectileId++}`;
@@ -410,7 +418,7 @@ export class GameRoom {
         damage: OCTOPUS_PROJECTILE_DAMAGE,
         letter: PRAT_LETTERS[letterIndex],
         salvoReleaseTime: now + letterIndex * SALVO_LETTER_DELAY_MS,
-        maxRange: PROJECTILE_MAX_RANGE,
+        maxRange: OCTOPUS_PROJECTILE_MAX_RANGE,
       });
     }
   }
@@ -449,7 +457,7 @@ export class GameRoom {
         y: input.startY,
         directionX,
         directionY,
-        speed: LETTER_SPEED_PX_PER_SEC,
+        speed: LETTER_SPEED_SIMULATION_UNITS_PER_SECOND,
         damage: LETTER_DAMAGE,
         letter: PRAT_LETTERS[letterIndex],
         salvoReleaseTime: now + letterIndex * SALVO_LETTER_DELAY_MS,
@@ -526,11 +534,11 @@ export class GameRoom {
     }
 
     for (const stingray of this.stingrays.values()) {
-      stingray.x += STINGRAY_SPEED_PX_PER_SEC * deltaSeconds;
+      stingray.x += STINGRAY_SPEED_SIMULATION_UNITS_PER_SECOND * deltaSeconds;
       const elapsedSeconds = (now - stingray.spawnTime) / 1000;
       stingray.y =
         stingray.baseY +
-        STINGRAY_AMPLITUDE * Math.sin(2 * Math.PI * STINGRAY_WAVE_FREQUENCY * elapsedSeconds);
+        STINGRAY_AMPLITUDE_SIMULATION_UNITS * Math.sin(2 * Math.PI * STINGRAY_WAVE_FREQUENCY * elapsedSeconds);
       if (stingray.x > WORLD_SIZE + 50 || stingray.life <= 0) {
         toRemove.push(stingray.id);
       }

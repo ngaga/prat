@@ -9,9 +9,17 @@ import {
   XP_BASE_FOR_LEVEL_2,
   XP_MULTIPLIER_PER_LEVEL,
 } from "@/lib/gameBalance";
+import {
+  CLICK_TARGET_RADIUS_SIMULATION_UNITS,
+  PLAYER_BOAT_SPEED_SIMULATION_UNITS_PER_SECOND,
+  PLAYER_MOVE_ARRIVAL_THRESHOLD_SIMULATION_UNITS,
+  WORLD_HALF_EXTENT_SIMULATION_UNITS,
+  WORLD_MARGIN_SIMULATION_UNITS,
+} from "@/lib/simulationSpace";
 import { playerIdToColor } from "@/lib/playerColor";
 import { getPlayerByName, upsertPlayer } from "@/lib/players";
 import { MAX_PLAYER_NAME_LENGTH, VIEW_HEIGHT, VIEW_WIDTH } from "../config";
+import { phaserPixelsToSimulation, simulationToPhaserPixels } from "../simulationToDisplay";
 
 interface PratEntity {
   id: string;
@@ -42,9 +50,11 @@ interface StingrayEntity {
   spawnTime: number;
 }
 
-const WORLD_SIZE = 2000;
-const WORLD_MARGIN = 50;
-const SEA_TILE_SIZE = 2000;
+const WORLD_SIZE = simulationToPhaserPixels(WORLD_HALF_EXTENT_SIMULATION_UNITS);
+const WORLD_MARGIN = simulationToPhaserPixels(WORLD_MARGIN_SIMULATION_UNITS);
+const SEA_TILE_SIZE = WORLD_SIZE;
+const CLICK_TARGET_RADIUS = simulationToPhaserPixels(CLICK_TARGET_RADIUS_SIMULATION_UNITS);
+const PRAT_CAPTURE_RADIUS_PIXELS = simulationToPhaserPixels(PRAT_CAPTURE_RADIUS);
 const OCTOPUS_LIFE = 80;
 const STINGRAY_LIFE = 60;
 const BAR_LABEL_WIDTH = 70;
@@ -82,12 +92,12 @@ export class GameScene extends Phaser.Scene {
   private boatNameLabel!: Phaser.GameObjects.Text;
   private moveTargetX: number | null = null;
   private moveTargetY: number | null = null;
-  private readonly moveArrivalThreshold = 15;
+  private readonly moveArrivalThreshold = simulationToPhaserPixels(PLAYER_MOVE_ARRIVAL_THRESHOLD_SIMULATION_UNITS);
   private pratEntities = new Map<string, PratEntity>();
   private pratCaptureRequestSent = new Set<string>();
   private score: number = 0;
   private scoreText!: Phaser.GameObjects.Text;
-  private readonly boatSpeed = 200;
+  private readonly boatSpeed = simulationToPhaserPixels(PLAYER_BOAT_SPEED_SIMULATION_UNITS_PER_SECOND);
   private multiplayer!: MultiplayerManager;
   private remoteBoats = new Map<string, RemoteBoatData>();
   private isSceneActive = true;
@@ -154,11 +164,19 @@ export class GameScene extends Phaser.Scene {
       },
       getLocalState: () => {
         if (!this.boat) {
-          return { x: 400, y: 300, rotation: 0, score: this.score, life: this.life, level: this.level, name: this.playerName ?? undefined };
+          return {
+            x: phaserPixelsToSimulation(400),
+            y: phaserPixelsToSimulation(300),
+            rotation: 0,
+            score: this.score,
+            life: this.life,
+            level: this.level,
+            name: this.playerName ?? undefined,
+          };
         }
         return {
-          x: this.boat.x,
-          y: this.boat.y,
+          x: phaserPixelsToSimulation(this.boat.x),
+          y: phaserPixelsToSimulation(this.boat.y),
           rotation: this.boat.rotation,
           score: this.score,
           life: this.life,
@@ -448,10 +466,10 @@ export class GameScene extends Phaser.Scene {
     void this.multiplayer.sendGameInput({
       type: "SHOOT",
       timestamp: ts,
-      startX,
-      startY,
-      targetX: targetBoat.sprite.x,
-      targetY: targetBoat.sprite.y,
+      startX: phaserPixelsToSimulation(startX),
+      startY: phaserPixelsToSimulation(startY),
+      targetX: phaserPixelsToSimulation(targetBoat.sprite.x),
+      targetY: phaserPixelsToSimulation(targetBoat.sprite.y),
     });
   }
 
@@ -462,10 +480,10 @@ export class GameScene extends Phaser.Scene {
     void this.multiplayer.sendGameInput({
       type: "SHOOT",
       timestamp: ts,
-      startX,
-      startY,
-      targetX: worldX,
-      targetY: worldY,
+      startX: phaserPixelsToSimulation(startX),
+      startY: phaserPixelsToSimulation(startY),
+      targetX: phaserPixelsToSimulation(worldX),
+      targetY: phaserPixelsToSimulation(worldY),
     });
   }
 
@@ -479,10 +497,10 @@ export class GameScene extends Phaser.Scene {
     void this.multiplayer.sendGameInput({
       type: "SHOOT",
       timestamp: ts,
-      startX: this.boat.x,
-      startY: this.boat.y,
-      targetX: octopus.sprite.x,
-      targetY: octopus.sprite.y,
+      startX: phaserPixelsToSimulation(this.boat.x),
+      startY: phaserPixelsToSimulation(this.boat.y),
+      targetX: phaserPixelsToSimulation(octopus.sprite.x),
+      targetY: phaserPixelsToSimulation(octopus.sprite.y),
     });
   }
 
@@ -499,7 +517,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private handleLeftClick(worldX: number, worldY: number): void {
-    const clickRadius = 60;
+    const clickRadius = CLICK_TARGET_RADIUS;
     for (const [playerId, boatData] of this.remoteBoats) {
       const distance = Phaser.Math.Distance.Between(worldX, worldY, boatData.sprite.x, boatData.sprite.y);
       if (distance < clickRadius) {
@@ -591,8 +609,8 @@ export class GameScene extends Phaser.Scene {
         void this.multiplayer.sendGameInput({
           type: "MOVE",
           timestamp: now,
-          x: this.boat.x,
-          y: this.boat.y,
+          x: phaserPixelsToSimulation(this.boat.x),
+          y: phaserPixelsToSimulation(this.boat.y),
           rotation: this.boat.rotation,
           name: this.playerName ?? undefined,
         });
@@ -657,8 +675,8 @@ export class GameScene extends Phaser.Scene {
       playersFromServer.set(playerId, {
         id: playerId,
         name: playerData.name,
-        x: playerData.x,
-        y: playerData.y,
+        x: simulationToPhaserPixels(playerData.x ?? 0),
+        y: simulationToPhaserPixels(playerData.y ?? 0),
         rotation: playerData.rotation,
         score: playerData.score ?? 0,
         life: playerData.life ?? MAX_LIFE,
@@ -690,9 +708,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   private upsertPratVisual(id: string, prat: PratState): void {
+    const px = simulationToPhaserPixels(prat.x);
+    const py = simulationToPhaserPixels(prat.y);
     let entity = this.pratEntities.get(id);
     if (!entity) {
-      const text = this.add.text(prat.x, prat.y, prat.word, {
+      const text = this.add.text(px, py, prat.word, {
         fontSize: `${prat.fontSize}px`,
         fontStyle: prat.fontStyle,
         color: prat.color,
@@ -703,7 +723,7 @@ export class GameScene extends Phaser.Scene {
       this.pratEntities.set(id, entity);
       return;
     }
-    entity.text.setPosition(prat.x, prat.y);
+    entity.text.setPosition(px, py);
     if (entity.text.text !== prat.word) {
       entity.text.setText(prat.word);
     }
@@ -721,9 +741,11 @@ export class GameScene extends Phaser.Scene {
         seen.add(id);
         const fromOctopus = projectile.shooterId.startsWith("octopus:");
         const fontSize = fromOctopus ? "24px" : "28px";
+        const projX = simulationToPhaserPixels(projectile.x);
+        const projY = simulationToPhaserPixels(projectile.y);
         let text = this.serverProjectileSprites.get(id);
         if (!text) {
-          text = this.add.text(projectile.x, projectile.y, projectile.letter, {
+          text = this.add.text(projX, projY, projectile.letter, {
             fontSize,
             fontStyle: "bold",
             color: "#000000",
@@ -732,7 +754,7 @@ export class GameScene extends Phaser.Scene {
           text.setDepth(8);
           this.serverProjectileSprites.set(id, text);
         } else {
-          text.setPosition(projectile.x, projectile.y);
+          text.setPosition(projX, projY);
           if (text.text !== projectile.letter) {
             text.setText(projectile.letter);
           }
@@ -764,8 +786,8 @@ export class GameScene extends Phaser.Scene {
       }
       this.processedProjectileHitReceivedEventIds.add(event.id);
       const damageAmount = Number(event.damage);
-      const worldX = event.x ?? this.boat?.x ?? localFromState?.x ?? 0;
-      const worldY = event.y ?? this.boat?.y ?? localFromState?.y ?? 0;
+      const worldX = this.boat?.x ?? simulationToPhaserPixels(event.x ?? localFromState?.x ?? 0);
+      const worldY = this.boat?.y ?? simulationToPhaserPixels(event.y ?? localFromState?.y ?? 0);
       if (damageAmount > 0) {
         this.spawnDamageBurst(worldX, worldY, damageAmount);
       } else if (damageAmount < 0) {
@@ -784,7 +806,7 @@ export class GameScene extends Phaser.Scene {
       this.processedProjectileHitDealtEventIds.add(event.id);
       const damageAmount = Number(event.damage);
       if (damageAmount > 0) {
-        this.spawnDamageBurst(event.x, event.y, damageAmount);
+        this.spawnDamageBurst(simulationToPhaserPixels(event.x), simulationToPhaserPixels(event.y), damageAmount);
       }
     }
     this.trimStringIdSet(this.processedProjectileHitDealtEventIds, maxTracked);
@@ -823,9 +845,11 @@ export class GameScene extends Phaser.Scene {
       const seenIds = new Set<string>();
       for (const [id, ray] of Object.entries(stingraysFromServer)) {
         seenIds.add(id);
+        const rayX = simulationToPhaserPixels(ray.x);
+        const rayY = simulationToPhaserPixels(ray.y);
         let entity = this.stingrays.get(id);
         if (!entity) {
-          const sprite = this.add.image(ray.x, ray.y, "stingray");
+          const sprite = this.add.image(rayX, rayY, "stingray");
           sprite.setScale(1.2);
           sprite.setDepth(4);
           sprite.setInteractive({ useHandCursor: true });
@@ -840,7 +864,7 @@ export class GameScene extends Phaser.Scene {
           };
           this.stingrays.set(id, entity);
         } else {
-          entity.sprite.setPosition(ray.x, ray.y);
+          entity.sprite.setPosition(rayX, rayY);
           entity.life = ray.life;
           entity.baseY = ray.baseY;
           entity.spawnTime = ray.spawnTime;
@@ -848,7 +872,7 @@ export class GameScene extends Phaser.Scene {
         const maxLife = ray.maxLife > 0 ? ray.maxLife : STINGRAY_LIFE;
         const lifeRatio = ray.life / maxLife;
         entity.lifeBar.clear();
-        this.drawBar(entity.lifeBar, ray.x - 20, ray.y - 35, 40, 5, 0x333333, 0xff6600, lifeRatio);
+        this.drawBar(entity.lifeBar, rayX - 20, rayY - 35, 40, 5, 0x333333, 0xff6600, lifeRatio);
       }
       for (const id of Array.from(this.stingrays.keys())) {
         if (!seenIds.has(id)) {
@@ -880,10 +904,12 @@ export class GameScene extends Phaser.Scene {
       const seenIds = new Set<string>();
       for (const [id, enemy] of Object.entries(state.enemies)) {
         seenIds.add(id);
+        const enemyX = simulationToPhaserPixels(enemy.x);
+        const enemyY = simulationToPhaserPixels(enemy.y);
 
         let entity = this.octopuses.get(id);
         if (!entity) {
-          const sprite = this.add.image(enemy.x, enemy.y, "octopus");
+          const sprite = this.add.image(enemyX, enemyY, "octopus");
           sprite.setScale(0.8);
           sprite.setDepth(5);
           sprite.setInteractive({ useHandCursor: true });
@@ -898,7 +924,7 @@ export class GameScene extends Phaser.Scene {
           };
           this.octopuses.set(id, entity);
         } else {
-          entity.sprite.setPosition(enemy.x, enemy.y);
+          entity.sprite.setPosition(enemyX, enemyY);
           entity.life = enemy.life;
           entity.lastShotTime = enemy.lastShotTime;
           entity.spawnTime = enemy.spawnTime;
@@ -907,7 +933,7 @@ export class GameScene extends Phaser.Scene {
         const maxLife = enemy.maxLife > 0 ? enemy.maxLife : OCTOPUS_LIFE;
         const lifeRatio = enemy.life / maxLife;
         entity.lifeBar.clear();
-        this.drawBar(entity.lifeBar, enemy.x - 25, enemy.y - 50, 50, 6, 0x333333, 0xff0000, lifeRatio);
+        this.drawBar(entity.lifeBar, enemyX - 25, enemyY - 50, 50, 6, 0x333333, 0xff0000, lifeRatio);
       }
 
       for (const id of Array.from(this.octopuses.keys())) {
@@ -976,14 +1002,14 @@ export class GameScene extends Phaser.Scene {
 
       const distance = Phaser.Math.Distance.Between(boatX, boatY, entity.text.x, entity.text.y);
 
-      if (distance < PRAT_CAPTURE_RADIUS) {
+      if (distance < PRAT_CAPTURE_RADIUS_PIXELS) {
         this.pratCaptureRequestSent.add(pratId);
         void this.multiplayer.sendGameInput({
           type: "PRAT_CAPTURE",
           timestamp: Date.now(),
           pratId,
-          x: boatX,
-          y: boatY,
+          x: phaserPixelsToSimulation(boatX),
+          y: phaserPixelsToSimulation(boatY),
         });
       }
     }

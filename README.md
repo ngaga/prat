@@ -9,11 +9,55 @@ Jeu de bateaux pirates qui capturent des "Prat" (comme pirate sans le i et le e)
 - Supabase (auth + DB)
 - Tailwind CSS
 
+## Unités de simulation et affichage
+
+Le jeu sépare **l’espace de simulation** (unités abstraites, type League of Legends) et **l’affichage** (pixels Phaser / navigateur). Toute la logique gameplay (serveur, collisions, vitesses) utilise des **unités de simulation** ; on ne convertit en pixels qu’au rendu (et l’inverse pour les entrées réseau).
+
+### Principes
+
+| Principe | Implémentation |
+|----------|----------------|
+| Pas de pixels d’écran dans la physique serveur | `gameEngine.ts` n’importe pas `displayConstants` |
+| Constantes spatiales partagées | `simulationSpace.ts`, `gameBalance.ts` (distances commentées « simulation units ») |
+| Canvas / zoom uniquement pour l’affichage | `VIEW_WIDTH` / `VIEW_HEIGHT` dans `displayConstants.ts` + `GameScene.updateCameraZoom()` |
+| Une couche de conversion rendu | `simulationToDisplay.ts` : `simulationToPhaserPixels`, `phaserPixelsToSimulation` |
+| Frontière client | `GameScene` : état SSE → `simulationToPhaserPixels` ; `MOVE` / `SHOOT` / `PRAT_CAPTURE` → `phaserPixelsToSimulation` |
+| Ratio par défaut | `SIMULATION_UNITS_TO_PHASER_PIXELS = 1` (équivalent historique 1 unité monde = 1 px Phaser) |
+
+### Fichiers
+
+- **`src/lib/simulationSpace.ts`** — Monde, vitesses, rayons, portées joueur, paramètres client (vitesse bateau, seuil d’arrivée, rayon de clic ciblage).
+- **`src/lib/gameBalance.ts`** — Progression, capture prat, octopus, etc. (distances en unités de simulation).
+- **`src/lib/displayConstants.ts`** — Résolution logique du canvas + zoom ; **pas** la simulation.
+- **`src/game/simulationToDisplay.ts`** — Point unique pour changer l’échelle globale affichage ↔ simulation sans toucher au serveur.
+- **`src/game/scenes/GameScene.ts`** — Conversions aux frontières réseau ↔ Phaser.
+
+### Choix
+
+1. **Nom « simulation units »** — Les nombres restent sur l’ancienne échelle (1 ≈ 1 « pixel monde » legacy) pour la balance ; pas de mélange avec des pixels CSS.
+2. **Portée max des lettres joueur** — `PLAYER_PROJECTILE_MAX_TRAVEL_SIMULATION_UNITS` (~1102) remplace l’ancien `√(VIEW²)/2` dans le moteur : la logique ne dépend plus de la résolution.
+3. **Zoom** — Indépendant du ratio `simulationToDisplay` : zoom = adapter la caméra à la fenêtre ; ratio = échelle monde → coordonnées Phaser.
+4. **`WorldSpace.ts`** — Héritage non utilisé ailleurs ; la conversion officielle est `simulationToDisplay.ts`.
+
+### Ajuster
+
+- **Gameplay** : `simulationSpace.ts` et `gameBalance.ts`.
+- **Rendu global** (tout plus grand/petit sans changer le serveur) : `SIMULATION_UNITS_TO_PHASER_PIXELS` dans `simulationToDisplay.ts` (vérifier bounds Phaser et clamp).
+
+### Limites
+
+- Phaser / `physics.world.setBounds` restent en coordonnées **après** conversion (normal).
+- Tailles de police des sprites texte en pixels CSS (hors modèle « monde simulation »).
+
 ## Développement
 
 ```bash
 npm install
 npm run dev
+```
+
+```bash
+npm run build
 ```
 
 ## Déploiement

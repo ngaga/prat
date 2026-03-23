@@ -1,42 +1,53 @@
-# Supabase setup
+# Supabase (this file is in English)
 
 ## Environment variables
 
-Add to `.env.local`:
+Add to your project `.env.local` (not committed):
 
-- `SUPABASE_SERVICE_ROLE_KEY` - Service role key (for API routes, never exposed to client)
+| Variable | Purpose |
+|----------|---------|
+| `SUPABASE_SERVICE_ROLE_KEY` | Server-only. Used by API routes. **Never** expose this to the browser or `NEXT_PUBLIC_*`. |
 
 ## Migrations
 
-Run the migration:
+**Option A – Dashboard**
 
-1. Go to Supabase Dashboard > SQL Editor
-2. Execute the contents of `migrations/20250213000000_init.sql`
+1. Supabase Dashboard → **SQL Editor**
+2. Paste and run `migrations/20250213000000_init.sql`
 
-Or with Supabase CLI: `supabase db push`
+**Option B – CLI**
 
-## Access
+```bash
+supabase db push
+```
 
-Database access is restricted: only the service role can read/write. The game uses API routes (`/api/feature-flags/*`, `/api/players/*`) that run server-side with the service role key.
+## Security model
+
+The database is not queried from the client with anon keys for game data. Next.js API routes (`/api/feature-flags/*`, `/api/players/*`) use the **service role** key on the server.
 
 ## Feature flags
 
-Keys live in table `feature_flags`. The game reads them via API routes (`/api/feature-flags/octopuses`, `/api/feature-flags/stingrays`). The authoritative game server (`gameEngine`) polls the same keys so spawns stay in sync.
+Rows live in `feature_flags`. The app reads them via:
 
-### Octopuses (`octopuses_enabled`)
+- `/api/feature-flags/octopuses`
+- `/api/feature-flags/stingrays`
+
+The game server (`gameEngine`) refreshes the same flag keys so octopus/stingray spawns match the database.
+
+### Toggle octopuses (`octopuses_enabled`)
 
 ```sql
 update feature_flags set value = false where key = 'octopuses_enabled';
--- enable:
+-- turn on:
 update feature_flags set value = true where key = 'octopuses_enabled';
 ```
 
-### Stingrays (`stingrays_enabled`)
+### Toggle stingrays (`stingrays_enabled`)
 
 ```sql
 update feature_flags set value = false where key = 'stingrays_enabled';
--- enable:
+-- turn on:
 update feature_flags set value = true where key = 'stingrays_enabled';
 ```
 
-Run migration `20250213120000_stingrays_feature_flag.sql` if the `stingrays_enabled` row is missing.
+If `stingrays_enabled` is missing, run `migrations/20250213120000_stingrays_feature_flag.sql`.

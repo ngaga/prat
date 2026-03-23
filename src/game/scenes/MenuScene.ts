@@ -105,7 +105,7 @@ export class MenuScene extends Phaser.Scene {
         keyboard.off("keydown-ENTER", onEnter);
       });
     }
-   }
+  }
 
   private async startGame(playerName: string): Promise<void> {
     this.playBackgroundMusic();

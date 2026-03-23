@@ -39,18 +39,25 @@ export class MenuScene extends Phaser.Scene {
     nameInput.placeholder = "Ton nom";
     nameInput.maxLength = MAX_PLAYER_NAME_LENGTH;
     nameInput.style.cssText =
-      "width: 220px; height: 40px; font-size: 18px; padding: 8px; border: 2px solid #333; text-align: center;";
+      "width: 220px; height: 40px; font-size: 18px; padding: 8px; border: 2px solid #333; text-align: center; pointer-events: auto;";
     const nameInputDom = this.add.dom(centerX, centerY + 50, nameInput);
+    nameInputDom.pointerEvents = "auto";
 
-    const playButton = this.add
-      .text(centerX, centerY + 110, "Jouer", {
+    const playButtonY = centerY + 110;
+    const playButtonWidth = 200;
+    const playButtonHeight = 56;
+
+    const playButtonBackground = this.add
+      .rectangle(centerX, playButtonY, playButtonWidth, playButtonHeight, 0x333333)
+      .setInteractive({ useHandCursor: true });
+
+    const playButtonText = this.add
+      .text(centerX, playButtonY, "Jouer", {
         fontSize: "32px",
         color: "#fff",
-        backgroundColor: "#333",
       })
       .setOrigin(0.5)
-      .setPadding(24, 12)
-      .setInteractive({ useHandCursor: true });
+      .setDepth(1);
 
     const errorText = this.add
       .text(centerX, centerY + 150, "", {
@@ -59,13 +66,14 @@ export class MenuScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
 
-    playButton.on("pointerover", () => {
-      playButton.setStyle({ backgroundColor: "#555" });
+    playButtonBackground.on("pointerover", () => {
+      playButtonBackground.setFillStyle(0x555555);
     });
-    playButton.on("pointerout", () => {
-      playButton.setStyle({ backgroundColor: "#333" });
+    playButtonBackground.on("pointerout", () => {
+      playButtonBackground.setFillStyle(0x333333);
     });
-    playButton.on("pointerdown", () => {
+
+    const submitPlay = (): void => {
       const name = (nameInputDom.node as HTMLInputElement).value.trim();
       if (!name) {
         errorText.setText("Entre ton nom pour jouer");
@@ -79,8 +87,21 @@ export class MenuScene extends Phaser.Scene {
       }
       errorText.setText("");
       this.startGame(name);
-    });
-  }
+    };
+
+    playButtonBackground.on("pointerdown", submitPlay);
+
+    const keyboard = this.input.keyboard;
+    if (keyboard) {
+      const onEnter = (): void => {
+        submitPlay();
+      };
+      keyboard.on("keydown-ENTER", onEnter);
+      this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+        keyboard.off("keydown-ENTER", onEnter);
+      });
+    }
+   }
 
   private async startGame(playerName: string): Promise<void> {
     this.playBackgroundMusic();

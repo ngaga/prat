@@ -94,6 +94,20 @@ export interface PlayerDamageEvent {
   damage: number;
 }
 
+/**
+ * Projectile hit on an octopus or stingray. Authoritative life stays in `enemies` / `stingrays`;
+ * this is for VFX and attribution (e.g. attackerId for local burst).
+ */
+export interface EnemyDamageEvent {
+  id: string;
+  targetKind: "octopus" | "stingray";
+  targetId: string;
+  attackerId: string;
+  damage: number;
+  x: number;
+  y: number;
+}
+
 export interface SerializableGameState {
   timestamp: number;
   room: string;
@@ -104,6 +118,8 @@ export interface SerializableGameState {
   projectiles: Record<string, ProjectileState>;
   /** Projectile hits this tick; use `damage` for feedback, not life deltas. */
   damageEvents: PlayerDamageEvent[];
+  /** Player projectiles hit octopus or stingray; same broadcast rules as player damageEvents. */
+  enemyDamageEvents: EnemyDamageEvent[];
   /** One-shot notifications (e.g. attacker feedback); life and XP for players are already in `players`. */
   eliminationEvents: EliminationEvent[];
   rewardEvents: RewardEvent[];

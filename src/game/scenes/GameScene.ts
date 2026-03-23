@@ -114,6 +114,7 @@ export class GameScene extends Phaser.Scene {
   private serverProjectileSprites = new Map<string, Phaser.GameObjects.Text>();
   private processedEliminationIds = new Set<string>();
   private processedDamageEventIds = new Set<string>();
+  private processedEnemyDamageEventIds = new Set<string>();
   private stingrays = new Map<string, StingrayEntity>();
   /** After first SSE snapshot, score delta triggers prat score pickup VFX (heal uses negative damage events). */
   private hudSyncedFromServer = false;
@@ -773,6 +774,20 @@ export class GameScene extends Phaser.Scene {
     }
     this.trimStringIdSet(this.processedDamageEventIds, maxTracked);
 
+    for (const event of state.enemyDamageEvents ?? []) {
+      if (this.processedEnemyDamageEventIds.has(event.id)) continue;
+      if (event.attackerId !== localId) {
+        this.processedEnemyDamageEventIds.add(event.id);
+        continue;
+      }
+      this.processedEnemyDamageEventIds.add(event.id);
+      const damageAmount = Number(event.damage);
+      if (damageAmount > 0) {
+        this.spawnDamageBurst(event.x, event.y, damageAmount);
+      }
+    }
+    this.trimStringIdSet(this.processedEnemyDamageEventIds, maxTracked);
+
     for (const event of state.eliminationEvents ?? []) {
       if (this.processedEliminationIds.has(event.id)) continue;
       this.processedEliminationIds.add(event.id);
@@ -824,11 +839,7 @@ export class GameScene extends Phaser.Scene {
           };
           this.stingrays.set(id, entity);
         } else {
-          const previousLife = entity.life;
           entity.sprite.setPosition(ray.x, ray.y);
-          if (ray.life < previousLife) {
-            this.spawnDamageBurst(ray.x, ray.y, previousLife - ray.life);
-          }
           entity.life = ray.life;
           entity.baseY = ray.baseY;
           entity.spawnTime = ray.spawnTime;
@@ -886,11 +897,7 @@ export class GameScene extends Phaser.Scene {
           };
           this.octopuses.set(id, entity);
         } else {
-          const previousLife = entity.life;
           entity.sprite.setPosition(enemy.x, enemy.y);
-          if (enemy.life < previousLife) {
-            this.spawnDamageBurst(enemy.x, enemy.y, previousLife - enemy.life);
-          }
           entity.life = enemy.life;
           entity.lastShotTime = enemy.lastShotTime;
           entity.spawnTime = enemy.spawnTime;

@@ -23,6 +23,7 @@ import {
 } from "@/lib/serverGameFeatureFlags";
 import type {
   EliminationEvent,
+  EnemyDamageEvent,
   EnemyState,
   PlayerInput,
   PlayerDamageEvent,
@@ -156,6 +157,8 @@ export class GameRoom {
    * Cleared at the start of each update(); prat heal queued in pendingDamage is merged at end of update().
    */
   private damageEventsForBroadcast: PlayerDamageEvent[] = [];
+  private pendingEnemyDamage: EnemyDamageEvent[] = [];
+  private enemyDamageEventsForBroadcast: EnemyDamageEvent[] = [];
   private eliminationEventsForBroadcast: EliminationEvent[] = [];
 
   constructor(roomId: string) {
@@ -456,6 +459,7 @@ export class GameRoom {
   private update(): void {
     const now = Date.now();
     this.damageEventsForBroadcast = [];
+    this.enemyDamageEventsForBroadcast = [];
     this.eliminationEventsForBroadcast = [];
     this.updateEnemiesAndSpawns(now);
     this.updateStingrays(now);
@@ -466,6 +470,8 @@ export class GameRoom {
     }
     this.damageEventsForBroadcast.push(...this.pendingDamage);
     this.pendingDamage.length = 0;
+    this.enemyDamageEventsForBroadcast.push(...this.pendingEnemyDamage);
+    this.pendingEnemyDamage.length = 0;
     this.eliminationEventsForBroadcast.push(...this.pendingEliminations);
     this.pendingEliminations.length = 0;
   }
@@ -582,7 +588,17 @@ export class GameRoom {
     }
     for (const [enemyId, enemy] of this.enemies) {
       if (distance(projectile.x, projectile.y, enemy.x, enemy.y) < PROJECTILE_HIT_RADIUS) {
-        enemy.life -= projectile.damage;
+        const damageDealt = projectile.damage;
+        enemy.life -= damageDealt;
+        this.pendingEnemyDamage.push({
+          id: `enemy-dmg-${randomEventSuffix()}`,
+          targetKind: "octopus",
+          targetId: enemyId,
+          attackerId: projectile.shooterId,
+          damage: damageDealt,
+          x: enemy.x,
+          y: enemy.y,
+        });
         this.projectiles.delete(projectileId);
         if (enemy.life <= 0) {
           this.enemies.delete(enemyId);
@@ -606,7 +622,17 @@ export class GameRoom {
     }
     for (const [stingrayId, stingray] of this.stingrays) {
       if (distance(projectile.x, projectile.y, stingray.x, stingray.y) < PROJECTILE_HIT_RADIUS) {
-        stingray.life -= projectile.damage;
+        const damageDealt = projectile.damage;
+        stingray.life -= damageDealt;
+        this.pendingEnemyDamage.push({
+          id: `enemy-dmg-${randomEventSuffix()}`,
+          targetKind: "stingray",
+          targetId: stingrayId,
+          attackerId: projectile.shooterId,
+          damage: damageDealt,
+          x: stingray.x,
+          y: stingray.y,
+        });
         this.projectiles.delete(projectileId);
         if (stingray.life <= 0) {
           this.stingrays.delete(stingrayId);
@@ -683,6 +709,7 @@ export class GameRoom {
     this.runSimulationTickIfDue(Date.now());
     // Merge input-only events (e.g. prat heal) not yet flushed by update(), without draining per caller.
     const damageEvents = [...this.damageEventsForBroadcast, ...this.pendingDamage];
+    const enemyDamageEvents = [...this.enemyDamageEventsForBroadcast, ...this.pendingEnemyDamage];
     const eliminationEvents = [...this.eliminationEventsForBroadcast, ...this.pendingEliminations];
 
     const playersRecord: Record<string, PlayerState> = {};
@@ -723,6 +750,7 @@ export class GameRoom {
       prats: pratsRecord,
       projectiles: projectilesRecord,
       damageEvents,
+      enemyDamageEvents,
       eliminationEvents,
       rewardEvents: [],
     };

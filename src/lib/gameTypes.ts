@@ -84,23 +84,26 @@ export interface EliminationEvent {
 }
 
 /**
- * One-shot per tick. Positive `damage` = projectile hit; negative = heal (e.g. prat heal letter).
- * Life is still authoritative in `players`; this drives VFX only.
+ * Local player was hit or healed (projectile, octopus shot, prat heal, etc.).
+ * Positive `damage` = hurt; negative = heal. Life stays authoritative in `players`.
  */
-export interface PlayerDamageEvent {
+export interface ProjectileHitReceivedEvent {
   id: string;
   targetPlayerId: string;
+  /** Who or what applied it: player id, `octopus:...`, or `prat` for heal letter. */
   attackerId: string;
   damage: number;
+  x: number;
+  y: number;
 }
 
 /**
- * Projectile hit on an octopus or stingray. Authoritative life stays in `enemies` / `stingrays`;
- * this is for VFX and attribution (e.g. attackerId for local burst).
+ * A player projectile dealt damage (any valid target). Authoritative life stays in
+ * `players` / `enemies` / `stingrays`; this drives attacker-side hit feedback (VFX).
  */
-export interface EnemyDamageEvent {
+export interface ProjectileHitDealtEvent {
   id: string;
-  targetKind: "octopus" | "stingray";
+  targetKind: "player" | "octopus" | "stingray";
   targetId: string;
   attackerId: string;
   damage: number;
@@ -116,10 +119,10 @@ export interface SerializableGameState {
   stingrays: Record<string, StingrayState>;
   prats: Record<string, PratState>;
   projectiles: Record<string, ProjectileState>;
-  /** Projectile hits this tick; use `damage` for feedback, not life deltas. */
-  damageEvents: PlayerDamageEvent[];
-  /** Player projectiles hit octopus or stingray; same broadcast rules as player damageEvents. */
-  enemyDamageEvents: EnemyDamageEvent[];
+  /** You were damaged or healed; same broadcast rules as projectileHitDealtEvents. */
+  projectileHitReceivedEvents: ProjectileHitReceivedEvent[];
+  /** Your projectiles hit something; same broadcast rules as projectileHitReceivedEvents. */
+  projectileHitDealtEvents: ProjectileHitDealtEvent[];
   /** One-shot notifications (e.g. attacker feedback); life and XP for players are already in `players`. */
   eliminationEvents: EliminationEvent[];
   rewardEvents: RewardEvent[];

@@ -23,11 +23,11 @@ import {
 } from "@/lib/serverGameFeatureFlags";
 import type {
   EliminationEvent,
-  EnemyDamageEvent,
   EnemyState,
+  ProjectileHitDealtEvent,
   PlayerInput,
-  PlayerDamageEvent,
   PlayerState,
+  ProjectileHitReceivedEvent,
   PratState,
   ProjectileState,
   SerializableGameState,
@@ -150,15 +150,15 @@ export class GameRoom {
   /** Simulation is advanced here and in runSimulationTickIfDue, not on a separate timer (avoids racing getState). */
   private lastSimulationTime = 0;
   /** Filled during update() and tryPratCapture; flushed at end of update() into broadcast buffers. */
-  private pendingDamage: PlayerDamageEvent[] = [];
+  private pendingProjectileHitReceived: ProjectileHitReceivedEvent[] = [];
   private pendingEliminations: EliminationEvent[] = [];
   /**
-   * One batch per simulation tick, not drained per getState(), so multiple SSE clients see the same damageEvents.
-   * Cleared at the start of each update(); prat heal queued in pendingDamage is merged at end of update().
+   * One batch per simulation tick, not drained per getState(), so multiple SSE clients see the same events.
+   * Cleared at the start of each update(); prat heal queued in pending is merged at end of update().
    */
-  private damageEventsForBroadcast: PlayerDamageEvent[] = [];
-  private pendingEnemyDamage: EnemyDamageEvent[] = [];
-  private enemyDamageEventsForBroadcast: EnemyDamageEvent[] = [];
+  private projectileHitReceivedEventsForBroadcast: ProjectileHitReceivedEvent[] = [];
+  private pendingProjectileHitDealt: ProjectileHitDealtEvent[] = [];
+  private projectileHitDealtEventsForBroadcast: ProjectileHitDealtEvent[] = [];
   private eliminationEventsForBroadcast: EliminationEvent[] = [];
 
   constructor(roomId: string) {
@@ -173,7 +173,7 @@ export class GameRoom {
 
   /**
    * Runs at most one simulation step per GAME_LOOP_INTERVAL_MS so multiple SSE clients do not double the tick rate.
-   * getState() reads damageEventsForBroadcast (filled at end of update) so all stream connections get the same events.
+   * getState() reads broadcast buffers (filled at end of update) so all stream connections get the same events.
    */
   runSimulationTickIfDue(now: number): void {
     if (now - this.lastSimulationTime < GAME_LOOP_INTERVAL_MS) return;
@@ -363,11 +363,13 @@ export class GameRoom {
     if (prat.isHeal) {
       const heal = prat.healAmount ?? 0;
       playerState.life = Math.min(MAX_LIFE, (playerState.life ?? MAX_LIFE) + heal);
-      this.pendingDamage.push({
-        id: `dmg-${randomEventSuffix()}`,
+      this.pendingProjectileHitReceived.push({
+        id: `hit-rcv-${randomEventSuffix()}`,
         targetPlayerId: playerId,
         attackerId: "prat",
         damage: -heal,
+        x: captureX,
+        y: captureY,
       });
     } else {
       playerState.score = (playerState.score ?? 0) + prat.power;
@@ -458,8 +460,8 @@ export class GameRoom {
 
   private update(): void {
     const now = Date.now();
-    this.damageEventsForBroadcast = [];
-    this.enemyDamageEventsForBroadcast = [];
+    this.projectileHitReceivedEventsForBroadcast = [];
+    this.projectileHitDealtEventsForBroadcast = [];
     this.eliminationEventsForBroadcast = [];
     this.updateEnemiesAndSpawns(now);
     this.updateStingrays(now);
@@ -468,10 +470,10 @@ export class GameRoom {
     if (this.players.size === 0 && this.emptySince === null) {
       this.emptySince = now;
     }
-    this.damageEventsForBroadcast.push(...this.pendingDamage);
-    this.pendingDamage.length = 0;
-    this.enemyDamageEventsForBroadcast.push(...this.pendingEnemyDamage);
-    this.pendingEnemyDamage.length = 0;
+    this.projectileHitReceivedEventsForBroadcast.push(...this.pendingProjectileHitReceived);
+    this.pendingProjectileHitReceived.length = 0;
+    this.projectileHitDealtEventsForBroadcast.push(...this.pendingProjectileHitDealt);
+    this.pendingProjectileHitDealt.length = 0;
     this.eliminationEventsForBroadcast.push(...this.pendingEliminations);
     this.pendingEliminations.length = 0;
   }
@@ -590,8 +592,8 @@ export class GameRoom {
       if (distance(projectile.x, projectile.y, enemy.x, enemy.y) < PROJECTILE_HIT_RADIUS) {
         const damageDealt = projectile.damage;
         enemy.life -= damageDealt;
-        this.pendingEnemyDamage.push({
-          id: `enemy-dmg-${randomEventSuffix()}`,
+        this.pendingProjectileHitDealt.push({
+          id: `hit-dealt-${randomEventSuffix()}`,
           targetKind: "octopus",
           targetId: enemyId,
           attackerId: projectile.shooterId,
@@ -624,8 +626,8 @@ export class GameRoom {
       if (distance(projectile.x, projectile.y, stingray.x, stingray.y) < PROJECTILE_HIT_RADIUS) {
         const damageDealt = projectile.damage;
         stingray.life -= damageDealt;
-        this.pendingEnemyDamage.push({
-          id: `enemy-dmg-${randomEventSuffix()}`,
+        this.pendingProjectileHitDealt.push({
+          id: `hit-dealt-${randomEventSuffix()}`,
           targetKind: "stingray",
           targetId: stingrayId,
           attackerId: projectile.shooterId,
@@ -655,11 +657,24 @@ export class GameRoom {
       if (playerId === projectile.shooterId) continue;
       if (distance(projectile.x, projectile.y, playerState.x, playerState.y) < PROJECTILE_HIT_RADIUS) {
         const previousLife = playerState.life ?? MAX_LIFE;
-        this.pendingDamage.push({
-          id: `dmg-${randomEventSuffix()}`,
+        const hitX = playerState.x;
+        const hitY = playerState.y;
+        this.pendingProjectileHitReceived.push({
+          id: `hit-rcv-${randomEventSuffix()}`,
           targetPlayerId: playerId,
           attackerId: projectile.shooterId,
           damage: projectile.damage,
+          x: hitX,
+          y: hitY,
+        });
+        this.pendingProjectileHitDealt.push({
+          id: `hit-dealt-${randomEventSuffix()}`,
+          targetKind: "player",
+          targetId: playerId,
+          attackerId: projectile.shooterId,
+          damage: projectile.damage,
+          x: hitX,
+          y: hitY,
         });
         playerState.life = Math.max(0, previousLife - projectile.damage);
         this.projectiles.delete(projectileId);
@@ -708,8 +723,14 @@ export class GameRoom {
   getState(): SerializableGameState {
     this.runSimulationTickIfDue(Date.now());
     // Merge input-only events (e.g. prat heal) not yet flushed by update(), without draining per caller.
-    const damageEvents = [...this.damageEventsForBroadcast, ...this.pendingDamage];
-    const enemyDamageEvents = [...this.enemyDamageEventsForBroadcast, ...this.pendingEnemyDamage];
+    const projectileHitReceivedEvents = [
+      ...this.projectileHitReceivedEventsForBroadcast,
+      ...this.pendingProjectileHitReceived,
+    ];
+    const projectileHitDealtEvents = [
+      ...this.projectileHitDealtEventsForBroadcast,
+      ...this.pendingProjectileHitDealt,
+    ];
     const eliminationEvents = [...this.eliminationEventsForBroadcast, ...this.pendingEliminations];
 
     const playersRecord: Record<string, PlayerState> = {};
@@ -749,8 +770,8 @@ export class GameRoom {
       stingrays: stingraysRecord,
       prats: pratsRecord,
       projectiles: projectilesRecord,
-      damageEvents,
-      enemyDamageEvents,
+      projectileHitReceivedEvents,
+      projectileHitDealtEvents,
       eliminationEvents,
       rewardEvents: [],
     };

@@ -113,8 +113,8 @@ export class GameScene extends Phaser.Scene {
   private readonly serverMoveThrottleMs = 100;
   private serverProjectileSprites = new Map<string, Phaser.GameObjects.Text>();
   private processedEliminationIds = new Set<string>();
-  private processedDamageEventIds = new Set<string>();
-  private processedEnemyDamageEventIds = new Set<string>();
+  private processedProjectileHitReceivedEventIds = new Set<string>();
+  private processedProjectileHitDealtEventIds = new Set<string>();
   private stingrays = new Map<string, StingrayEntity>();
   /** After first SSE snapshot, score delta triggers prat score pickup VFX (heal uses negative damage events). */
   private hudSyncedFromServer = false;
@@ -356,7 +356,8 @@ export class GameScene extends Phaser.Scene {
     }
     this.serverProjectileSprites.clear();
     this.processedEliminationIds.clear();
-    this.processedDamageEventIds.clear();
+    this.processedProjectileHitReceivedEventIds.clear();
+    this.processedProjectileHitDealtEventIds.clear();
     for (const entity of this.pratEntities.values()) {
       entity.text.destroy();
     }
@@ -754,39 +755,39 @@ export class GameScene extends Phaser.Scene {
     const localId = this.multiplayer.getPlayerId();
     const localFromState = state.players?.[localId];
 
-    for (const event of state.damageEvents ?? []) {
-      if (this.processedDamageEventIds.has(event.id)) continue;
+    // Local player was damaged or healed (mirror of projectileHitDealtEvents for the attacker).
+    for (const event of state.projectileHitReceivedEvents ?? []) {
+      if (this.processedProjectileHitReceivedEventIds.has(event.id)) continue;
       if (event.targetPlayerId !== localId) {
-        this.processedDamageEventIds.add(event.id);
+        this.processedProjectileHitReceivedEventIds.add(event.id);
         continue;
       }
-      // Same coordinate fallback as prat pickup bursts (boat + server); avoid skipping the event
-      // when one source is missing (would drop one-shot damageEvents forever).
-      const worldX = this.boat?.x ?? localFromState?.x ?? 0;
-      const worldY = this.boat?.y ?? localFromState?.y ?? 0;
-      this.processedDamageEventIds.add(event.id);
+      this.processedProjectileHitReceivedEventIds.add(event.id);
       const damageAmount = Number(event.damage);
+      const worldX = event.x ?? this.boat?.x ?? localFromState?.x ?? 0;
+      const worldY = event.y ?? this.boat?.y ?? localFromState?.y ?? 0;
       if (damageAmount > 0) {
         this.spawnDamageBurst(worldX, worldY, damageAmount);
       } else if (damageAmount < 0) {
         this.spawnPratPickupBurst(worldX, worldY, true);
       }
     }
-    this.trimStringIdSet(this.processedDamageEventIds, maxTracked);
+    this.trimStringIdSet(this.processedProjectileHitReceivedEventIds, maxTracked);
 
-    for (const event of state.enemyDamageEvents ?? []) {
-      if (this.processedEnemyDamageEventIds.has(event.id)) continue;
+    // Local player dealt damage to any target (player, octopus, or stingray); one burst per hit.
+    for (const event of state.projectileHitDealtEvents ?? []) {
+      if (this.processedProjectileHitDealtEventIds.has(event.id)) continue;
       if (event.attackerId !== localId) {
-        this.processedEnemyDamageEventIds.add(event.id);
+        this.processedProjectileHitDealtEventIds.add(event.id);
         continue;
       }
-      this.processedEnemyDamageEventIds.add(event.id);
+      this.processedProjectileHitDealtEventIds.add(event.id);
       const damageAmount = Number(event.damage);
       if (damageAmount > 0) {
         this.spawnDamageBurst(event.x, event.y, damageAmount);
       }
     }
-    this.trimStringIdSet(this.processedEnemyDamageEventIds, maxTracked);
+    this.trimStringIdSet(this.processedProjectileHitDealtEventIds, maxTracked);
 
     for (const event of state.eliminationEvents ?? []) {
       if (this.processedEliminationIds.has(event.id)) continue;

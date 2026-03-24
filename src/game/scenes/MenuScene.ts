@@ -108,28 +108,10 @@ export class MenuScene extends Phaser.Scene {
   }
 
   private async startGame(playerName: string): Promise<void> {
-    this.playBackgroundMusic();
     const [octopusesEnabled, stingraysEnabled] = await Promise.all([
       isOctopusesEnabled(),
       isStingraysEnabled(),
     ]);
     this.scene.start("GameScene", { octopusesEnabled, stingraysEnabled, playerName });
-  }
-
-  private playBackgroundMusic(): void {
-    const musicUrl = this.cache.audio.exists("music")
-      ? "/sounds/music.mp3"
-      : "https://assets.mixkit.co/music/preview/mixkit-game-level-music-689.mp3";
-    try {
-      const audio = new Audio(musicUrl);
-      audio.loop = true;
-      audio.volume = 0.5;
-      this.registry.set("backgroundMusic", audio);
-      audio.play().catch(() => {
-        // Autoplay blocked or load failed
-      });
-    } catch {
-      // Ignore audio errors
-    }
   }
 }

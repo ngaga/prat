@@ -8,7 +8,8 @@ export class BootScene extends Phaser.Scene {
 
   preload(): void {
     this.createBoatTexture();
-    this.load.audio("music", "/sounds/music.mp3");
+    this.load.audio("musicDay", "/sounds/day.m4a");
+    this.load.audio("musicNight", "/sounds/night.m4a");
   }
 
   private createBoatTexture(): void {

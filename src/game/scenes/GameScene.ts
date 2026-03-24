@@ -21,6 +21,7 @@ import { playerIdToColor } from "@/lib/playerColor";
 import { getPlayerByName, upsertPlayer } from "@/lib/players";
 import { MAX_PLAYER_NAME_LENGTH, VIEW_HEIGHT, VIEW_WIDTH } from "../config";
 import { phaserPixelsToSimulation, simulationToPhaserPixels } from "../simulationToDisplay";
+import { setBackgroundMusicForGhostMode, stopBackgroundMusic } from "../backgroundMusic";
 
 interface PratEntity {
   id: string;
@@ -247,6 +248,7 @@ export class GameScene extends Phaser.Scene {
     this.boat.setTint(BOAT_SILHOUETTE_TINT);
     this.setLocalGhostCameraInversion(this.localIsGhost);
     this.applyLocalBoatGhostVisual(this.boat, this.localIsGhost);
+    setBackgroundMusicForGhostMode(this.registry, this.localIsGhost);
 
     const displayName =
       this.playerName && this.playerName.length <= MAX_PLAYER_NAME_LENGTH
@@ -402,6 +404,7 @@ export class GameScene extends Phaser.Scene {
 
   shutdown(): void {
     this.isSceneActive = false;
+    stopBackgroundMusic(this.registry);
     this.savePlayer();
     this.input.off("pointerdown", this.onPointerDown, this);
     this.scale.off("resize", this.updateCameraZoom, this);
@@ -821,6 +824,9 @@ export class GameScene extends Phaser.Scene {
         } else {
           this.ghostHudText.setVisible(false);
         }
+      }
+      if (wasGhost !== this.localIsGhost) {
+        setBackgroundMusicForGhostMode(this.registry, this.localIsGhost);
       }
       if (wasGhost !== this.localIsGhost || prevGhostPrats !== this.syncedGhostPratsCaptured) {
         void this.savePlayer();

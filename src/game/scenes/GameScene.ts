@@ -133,9 +133,7 @@ export class GameScene extends Phaser.Scene {
   private hudSyncedFromServer = false;
   private localIsGhost = false;
   private ghostHudText: Phaser.GameObjects.Text | null = null;
-  /** Full-screen color inversion when the local player is a ghost (sea, prats, enemies, boats). WebGL only. */
-  private ghostCameraColorMatrixFx: Phaser.FX.Controller | null = null;
-  /** True only when the camera negative effect was added successfully (affects boat tint vs clear tint). */
+  /** True when the game canvas uses CSS invert for local ghost mode (affects boat tint vs clear tint). */
   private ghostCameraInversionActive = false;
   /** When the local player is alive, ghost remote boats use per-sprite inversion (camera is off). */
   private remoteBoatGhostFx = new WeakMap<Phaser.GameObjects.Image, Phaser.FX.Controller>();
@@ -430,41 +428,30 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
-   * Inverts the whole game view for the local ghost (WebGL).
-   * Boat uses white texture + black tint so the inverted result reads as a white silhouette.
+   * Full-screen inversion for local ghost mode via CSS on the canvas.
+   * Camera postFX ColorMatrix was limited to a wrong-sized region with zoom; CSS inverts the whole bitmap.
    */
   private setLocalGhostCameraInversion(enabled: boolean): void {
+    const canvas = this.game?.canvas;
     if (enabled) {
-      if (this.ghostCameraColorMatrixFx) return;
-      try {
-        const camera = this.cameras.main;
-        if (camera.postFX == null) {
-          camera.initPostPipeline();
-        }
-        const colorMatrix = camera.postFX.addColorMatrix();
-        colorMatrix.negative();
-        this.ghostCameraColorMatrixFx = colorMatrix as unknown as Phaser.FX.Controller;
+      if (this.ghostCameraInversionActive) return;
+      if (canvas) {
+        canvas.style.filter = "invert(1)";
         this.ghostCameraInversionActive = true;
-      } catch {
+      } else {
         this.ghostCameraInversionActive = false;
-        // Canvas renderer or post pipelines unavailable
       }
     } else {
-      this.ghostCameraInversionActive = false;
-      if (this.ghostCameraColorMatrixFx) {
-        try {
-          this.cameras.main.postFX.remove(this.ghostCameraColorMatrixFx);
-        } catch {
-          // ignore
-        }
-        this.ghostCameraColorMatrixFx = null;
+      if (canvas) {
+        canvas.style.filter = "";
       }
+      this.ghostCameraInversionActive = false;
     }
   }
 
   /**
-   * White texture: black tint = normal boat; ghost with camera invert = black tint (reads white after invert);
-   * ghost without camera invert = clear tint (white boat), dark-mode style.
+   * White texture: black tint = normal boat; ghost with full-screen invert = black tint (reads white after invert);
+   * ghost without invert = clear tint (white boat).
    */
   private applyLocalBoatGhostVisual(sprite: Phaser.Physics.Arcade.Sprite, isGhost: boolean): void {
     if (isGhost) {

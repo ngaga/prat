@@ -18,6 +18,9 @@ export interface PlayerInput {
   experience?: number;
   killsOctopus?: number;
   killsStingray?: number;
+  /** With SYNC_PROFILE: restore ghost after reconnect (persisted in Supabase like exp). */
+  isGhost?: boolean;
+  ghostPratsCaptured?: number;
   startX?: number;
   startY?: number;
   targetX?: number;

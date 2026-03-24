@@ -132,6 +132,8 @@ export class GameScene extends Phaser.Scene {
   /** After first SSE snapshot, score delta triggers prat score pickup VFX (heal uses negative damage events). */
   private hudSyncedFromServer = false;
   private localIsGhost = false;
+  /** Mirrors server ghost prat count; used for Supabase persistence like experience. */
+  private syncedGhostPratsCaptured = 0;
   private ghostHudText: Phaser.GameObjects.Text | null = null;
   /** True when the game canvas uses CSS invert for local ghost mode (affects boat tint vs clear tint). */
   private ghostCameraInversionActive = false;
@@ -199,13 +201,17 @@ export class GameScene extends Phaser.Scene {
     if (!this.playerName) {
       this.playerName = this.multiplayer.getPlayerId();
     }
+    let existingPlayerForGhost: Awaited<ReturnType<typeof getPlayerByName>> = null;
     if (this.playerName) {
       const existingPlayer = await getPlayerByName(this.playerName);
+      existingPlayerForGhost = existingPlayer;
       if (existingPlayer) {
         this.experience = existingPlayer.exp;
         this.level = existingPlayer.level;
         this.killsOctopus = existingPlayer.kills_octopus;
         this.killsStingray = existingPlayer.kills_stingray;
+        this.localIsGhost = existingPlayer.is_ghost ?? false;
+        this.syncedGhostPratsCaptured = existingPlayer.ghost_prats_captured ?? 0;
       } else {
         const created = await upsertPlayer({
           name: this.playerName ?? undefined,
@@ -213,6 +219,8 @@ export class GameScene extends Phaser.Scene {
           level: 1,
           kills_octopus: 0,
           kills_stingray: 0,
+          is_ghost: false,
+          ghost_prats_captured: 0,
         });
         if (!created) {
           console.warn("Failed to create player in database");
@@ -220,18 +228,25 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
+    const ghostRestoreFromDb =
+      existingPlayerForGhost?.is_ghost === true
+        ? { isGhost: true as const, ghostPratsCaptured: existingPlayerForGhost.ghost_prats_captured ?? 0 }
+        : undefined;
     void this.multiplayer.sendGameInput({
       type: "SYNC_PROFILE",
       timestamp: Date.now(),
       experience: this.experience,
       killsOctopus: this.killsOctopus,
       killsStingray: this.killsStingray,
+      ...(ghostRestoreFromDb ? ghostRestoreFromDb : {}),
     });
 
     this.boat = this.physics.add.sprite(0, 0, "boat");
     this.boat.setCollideWorldBounds(true);
     this.boat.setScale(0.5);
     this.boat.setTint(BOAT_SILHOUETTE_TINT);
+    this.setLocalGhostCameraInversion(this.localIsGhost);
+    this.applyLocalBoatGhostVisual(this.boat, this.localIsGhost);
 
     const displayName =
       this.playerName && this.playerName.length <= MAX_PLAYER_NAME_LENGTH
@@ -344,6 +359,8 @@ export class GameScene extends Phaser.Scene {
       level: this.level,
       kills_octopus: this.killsOctopus,
       kills_stingray: this.killsStingray,
+      is_ghost: this.localIsGhost,
+      ghost_prats_captured: this.syncedGhostPratsCaptured,
     });
   }
 
@@ -775,6 +792,7 @@ export class GameScene extends Phaser.Scene {
       const newScore = me.score ?? 0;
       const boat = this.boat;
       const wasGhost = this.localIsGhost;
+      const prevGhostPrats = this.syncedGhostPratsCaptured;
 
       if (this.hudSyncedFromServer && boat && !me.isGhost) {
         if (newScore > oldScore && newScore - oldScore <= SCORE_DELTA_PRAT_PICKUP_MAX) {
@@ -792,6 +810,7 @@ export class GameScene extends Phaser.Scene {
       this.killsStingray = me.killsStingray ?? 0;
       this.scoreText.setText(`Prat capturés: ${this.score}`);
       this.localIsGhost = me.isGhost ?? false;
+      this.syncedGhostPratsCaptured = me.ghostPratsCaptured ?? 0;
       this.setLocalGhostCameraInversion(this.localIsGhost);
       if (this.ghostHudText) {
         if (me.isGhost) {
@@ -803,7 +822,7 @@ export class GameScene extends Phaser.Scene {
           this.ghostHudText.setVisible(false);
         }
       }
-      if (wasGhost && !this.localIsGhost) {
+      if (wasGhost !== this.localIsGhost || prevGhostPrats !== this.syncedGhostPratsCaptured) {
         void this.savePlayer();
       }
       if (this.level > previousLevel) {

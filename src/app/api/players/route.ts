@@ -16,6 +16,8 @@ export async function POST(request: Request) {
       level: number;
       kills_octopus?: number;
       kills_stingray?: number;
+      is_ghost?: boolean;
+      ghost_prats_captured?: number;
     };
     const supabase = createAdminClient();
     const { error } = await supabase.from("players").upsert(
@@ -25,6 +27,8 @@ export async function POST(request: Request) {
         level: body.level,
         kills_octopus: body.kills_octopus ?? 0,
         kills_stingray: body.kills_stingray ?? 0,
+        is_ghost: body.is_ghost ?? false,
+        ghost_prats_captured: body.ghost_prats_captured ?? 0,
         updated_at: new Date().toISOString(),
       },
       { onConflict: "name" }

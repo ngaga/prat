@@ -348,14 +348,40 @@ export class GameRoom {
       const previous = this.players.get(playerId) ?? this.defaultPlayer(playerId);
       let experience = previous.experience ?? 0;
       if (input.experience !== undefined) experience = input.experience;
+
+      let nextIsGhost = previous.isGhost ?? false;
+      let nextGhostPrats = previous.ghostPratsCaptured ?? 0;
+      let nextX = previous.x;
+      let nextY = previous.y;
+      let nextLife = previous.life ?? MAX_LIFE;
+
+      if (input.isGhost === true) {
+        const raw = Math.max(0, input.ghostPratsCaptured ?? 0);
+        if (raw >= GHOST_PRATS_TO_LEAVE) {
+          nextIsGhost = false;
+          nextGhostPrats = 0;
+          nextLife = MAX_LIFE;
+        } else {
+          nextIsGhost = true;
+          nextGhostPrats = raw;
+          const spawn = randomCornerSpawn();
+          nextX = spawn.x;
+          nextY = spawn.y;
+          nextLife = MAX_LIFE;
+        }
+      }
+
       this.players.set(playerId, {
         ...previous,
+        x: nextX,
+        y: nextY,
+        life: nextIsGhost ? MAX_LIFE : nextLife,
         experience,
         level: getLevelFromExperience(experience),
         killsOctopus: input.killsOctopus ?? previous.killsOctopus ?? 0,
         killsStingray: input.killsStingray ?? previous.killsStingray ?? 0,
-        isGhost: previous.isGhost,
-        ghostPratsCaptured: previous.ghostPratsCaptured,
+        isGhost: nextIsGhost,
+        ghostPratsCaptured: nextGhostPrats,
       });
       return {};
     }

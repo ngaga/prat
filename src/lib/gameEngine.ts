@@ -702,6 +702,7 @@ export class GameRoom {
   private tryProjectileHitPlayer(projectileId: string, projectile: ServerProjectile): boolean {
     for (const [playerId, playerState] of this.players) {
       if (playerId === projectile.shooterId) continue;
+      if (playerState.isGhost) continue;
       if (distance(projectile.x, projectile.y, playerState.x, playerState.y) < PROJECTILE_HIT_RADIUS) {
         const previousLife = playerState.life ?? MAX_LIFE;
         const hitX = playerState.x;

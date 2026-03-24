@@ -20,7 +20,7 @@ export const OCTOPUS_PROJECTILE_DAMAGE = 4;
 /** Octopus letter speed as a fraction of player letter speed. */
 export const OCTOPUS_PROJECTILE_SPEED_FACTOR = 0.8;
 /** Max travel distance for octopus letters. Simulation units. */
-export const OCTOPUS_PROJECTILE_MAX_RANGE = 240;
+export const OCTOPUS_PROJECTILE_MAX_RANGE = 500;
 
 /** Word prats captured while ghost to leave ghost mode and return to normal play. */
 export const GHOST_PRATS_TO_LEAVE = 10;

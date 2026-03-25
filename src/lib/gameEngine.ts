@@ -348,6 +348,7 @@ export class GameRoom {
       const previous = this.players.get(playerId) ?? this.defaultPlayer(playerId);
       let experience = previous.experience ?? 0;
       if (input.experience !== undefined) experience = input.experience;
+      const level = getLevelFromExperience(experience);
 
       let nextIsGhost = previous.isGhost ?? false;
       let nextGhostPrats = previous.ghostPratsCaptured ?? 0;
@@ -377,7 +378,7 @@ export class GameRoom {
         y: nextY,
         life: nextIsGhost ? MAX_LIFE : nextLife,
         experience,
-        level: getLevelFromExperience(experience),
+        level,
         killsOctopus: input.killsOctopus ?? previous.killsOctopus ?? 0,
         killsStingray: input.killsStingray ?? previous.killsStingray ?? 0,
         isGhost: nextIsGhost,

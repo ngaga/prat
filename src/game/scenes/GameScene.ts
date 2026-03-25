@@ -3,12 +3,10 @@ import { EventBus } from "../EventBus";
 import { MultiplayerManager, type RemotePlayer } from "../multiplayer/MultiplayerManager";
 import type { PratState, SerializableGameState } from "@/lib/gameTypes";
 import {
-  getLevelFromExperience,
+  getExperienceProgressTowardNextLevel,
   GHOST_PRATS_TO_LEAVE,
   MAX_LIFE,
   PRAT_CAPTURE_RADIUS,
-  XP_BASE_FOR_LEVEL_2,
-  XP_MULTIPLIER_PER_LEVEL,
 } from "@/lib/gameBalance";
 import {
   CLICK_TARGET_RADIUS_SIMULATION_UNITS,
@@ -67,15 +65,6 @@ const SCORE_DELTA_PRAT_PICKUP_MAX = 4;
 const BOAT_SILHOUETTE_TINT = 0x000000;
 function shortId(uuid: string): string {
   return uuid.slice(0, 8);
-}
-
-function getExperienceProgressForCurrentLevel(totalExperience: number): { current: number; needed: number } {
-  const level = getLevelFromExperience(totalExperience);
-  const cumulativeForCurrentLevel =
-    level <= 1 ? 0 : XP_BASE_FOR_LEVEL_2 * (Math.pow(XP_MULTIPLIER_PER_LEVEL, level - 1) - 1);
-  const xpInCurrentLevel = totalExperience - cumulativeForCurrentLevel;
-  const xpNeededForNextLevel = XP_BASE_FOR_LEVEL_2 * Math.pow(XP_MULTIPLIER_PER_LEVEL, level - 1);
-  return { current: xpInCurrentLevel, needed: xpNeededForNextLevel };
 }
 
 function normalizeDirection(
@@ -233,14 +222,6 @@ export class GameScene extends Phaser.Scene {
       existingPlayerForGhost?.is_ghost === true
         ? { isGhost: true as const, ghostPratsCaptured: existingPlayerForGhost.ghost_prats_captured ?? 0 }
         : undefined;
-    void this.multiplayer.sendGameInput({
-      type: "SYNC_PROFILE",
-      timestamp: Date.now(),
-      experience: this.experience,
-      killsOctopus: this.killsOctopus,
-      killsStingray: this.killsStingray,
-      ...(ghostRestoreFromDb ? ghostRestoreFromDb : {}),
-    });
 
     this.boat = this.physics.add.sprite(0, 0, "boat");
     this.boat.setCollideWorldBounds(true);
@@ -265,6 +246,20 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.setBounds(-WORLD_SIZE, -WORLD_SIZE, WORLD_SIZE * 2, WORLD_SIZE * 2);
     this.updateCameraZoom();
     this.scale.on("resize", this.updateCameraZoom, this);
+
+    // Apply profile on the server before SSE: first snapshot would otherwise use default level 1 and overwrite DB values.
+    try {
+      await this.multiplayer.sendGameInput({
+        type: "SYNC_PROFILE",
+        timestamp: Date.now(),
+        experience: this.experience,
+        killsOctopus: this.killsOctopus,
+        killsStingray: this.killsStingray,
+        ...(ghostRestoreFromDb ? ghostRestoreFromDb : {}),
+      });
+    } catch {
+      // Still connect; HUD may briefly mismatch until the next successful sync.
+    }
 
     // Start SSE after the boat exists so damage VFX always has a world position (sprite or snapshot fallback).
     this.multiplayer.connectGameStream("default");
@@ -347,7 +342,7 @@ export class GameScene extends Phaser.Scene {
       .setOrigin(0, 0.5)
       .setScrollFactor(0);
     this.add
-      .text(BAR_X + barWidth + 10, experienceY + barHeight / 2, "Niv. 1", { fontSize: "12px", color: "#000" })
+      .text(BAR_X + barWidth + 10, experienceY + barHeight / 2, `Niv. ${this.level}`, { fontSize: "12px", color: "#000" })
       .setOrigin(0, 0.5)
       .setScrollFactor(0)
       .setName("level-text");
@@ -733,7 +728,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   update(): void {
-    if (!this.boat || !this.boatNameLabel) return;
+    if (!this.boat || !this.boatNameLabel || !this.lifeBar || !this.experienceBar) return;
     this.boatNameLabel.setPosition(this.boat.x, this.boat.y - 50);
     this.sea.setPosition(this.boat.x, this.boat.y);
     this.sea.tilePositionX = this.boat.x;
@@ -744,8 +739,20 @@ export class GameScene extends Phaser.Scene {
     const lifeY = this.scale.height - 55;
     const experienceY = this.scale.height - 35;
     this.drawBar(this.lifeBar, BAR_X, lifeY, barWidth, barHeight, 0x333333, 0x00ff00, this.life / MAX_LIFE);
-    const { current: xpCurrent, needed: xpNeeded } = getExperienceProgressForCurrentLevel(this.experience);
-    this.drawBar(this.experienceBar, BAR_X, experienceY, barWidth, barHeight, 0x333333, 0x9b59b6, xpCurrent / xpNeeded);
+    const { current: experienceInCurrentLevel, needed: experienceNeededForNextLevel } =
+      getExperienceProgressTowardNextLevel(this.experience);
+    const experienceBarRatio =
+      experienceNeededForNextLevel > 0 ? experienceInCurrentLevel / experienceNeededForNextLevel : 0;
+    this.drawBar(
+      this.experienceBar,
+      BAR_X,
+      experienceY,
+      barWidth,
+      barHeight,
+      0x333333,
+      0x9b59b6,
+      experienceBarRatio
+    );
     const levelText = this.children.getByName("level-text") as Phaser.GameObjects.Text;
     if (levelText) levelText.setText(`Niv. ${this.level}`);
 

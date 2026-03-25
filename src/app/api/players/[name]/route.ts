@@ -1,3 +1,4 @@
+import { getLevelFromExperience } from "@/lib/gameBalance";
 import { createAdminClient } from "@/lib/supabaseAdmin";
 import { NextResponse } from "next/server";
 
@@ -21,7 +22,14 @@ export async function GET(
       console.error("getPlayerByName error:", error);
       return NextResponse.json(null);
     }
-    return NextResponse.json(data);
+    if (!data) {
+      return NextResponse.json(null);
+    }
+    const exp = Number.isFinite(Number(data.exp)) ? Number(data.exp) : 0;
+    return NextResponse.json({
+      ...data,
+      level: getLevelFromExperience(exp),
+    });
   } catch {
     return NextResponse.json(null);
   }

@@ -14,6 +14,7 @@ export interface PlayerInput {
   /** Ignored on MOVE: server keeps authoritative progression. */
   score?: number;
   life?: number;
+  /** Optional; authoritative level comes from total experience on the server. */
   level?: number;
   experience?: number;
   killsOctopus?: number;

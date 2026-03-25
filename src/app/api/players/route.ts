@@ -1,3 +1,4 @@
+import { getLevelFromExperience } from "@/lib/gameBalance";
 import { createAdminClient } from "@/lib/supabaseAdmin";
 import { NextResponse } from "next/server";
 
@@ -10,21 +11,45 @@ export async function POST(request: Request) {
     );
   }
   try {
-    const body = (await request.json()) as {
+    const raw = await request.text();
+    if (!raw.trim()) {
+      return NextResponse.json(
+        { success: false, error: "Request body is required" },
+        { status: 400 }
+      );
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return NextResponse.json(
+        { success: false, error: "Invalid JSON body" },
+        { status: 400 }
+      );
+    }
+    const body = parsed as {
       name: string;
       exp: number;
-      level: number;
+      level?: number;
       kills_octopus?: number;
       kills_stingray?: number;
       is_ghost?: boolean;
       ghost_prats_captured?: number;
     };
     const supabase = createAdminClient();
+    const trimmedName = body.name.trim();
+    if (!trimmedName) {
+      return NextResponse.json({ success: false, error: "name is required" }, { status: 400 });
+    }
+
+    const exp = Number.isFinite(Number(body.exp)) ? Number(body.exp) : 0;
+    const level = getLevelFromExperience(exp);
+
     const { error } = await supabase.from("players").upsert(
       {
-        name: body.name.trim(),
-        exp: body.exp,
-        level: body.level,
+        name: trimmedName,
+        exp,
+        level,
         kills_octopus: body.kills_octopus ?? 0,
         kills_stingray: body.kills_stingray ?? 0,
         is_ghost: body.is_ghost ?? false,

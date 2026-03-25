@@ -33,6 +33,7 @@ export async function POST(request: Request) {
       level?: number;
       kills_octopus?: number;
       kills_stingray?: number;
+      prats_captured?: number;
       is_ghost?: boolean;
       ghost_prats_captured?: number;
     };
@@ -52,6 +53,7 @@ export async function POST(request: Request) {
         level,
         kills_octopus: body.kills_octopus ?? 0,
         kills_stingray: body.kills_stingray ?? 0,
+        prats_captured: body.prats_captured ?? 0,
         is_ghost: body.is_ghost ?? false,
         ghost_prats_captured: body.ghost_prats_captured ?? 0,
         updated_at: new Date().toISOString(),

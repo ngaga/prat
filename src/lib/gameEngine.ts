@@ -220,6 +220,7 @@ export class GameRoom {
       experience: 0,
       killsOctopus: 0,
       killsStingray: 0,
+      pratsCaptured: 0,
       color: playerIdToColor(playerId),
       isGhost: false,
       ghostPratsCaptured: 0,
@@ -381,6 +382,7 @@ export class GameRoom {
         level,
         killsOctopus: input.killsOctopus ?? previous.killsOctopus ?? 0,
         killsStingray: input.killsStingray ?? previous.killsStingray ?? 0,
+        pratsCaptured: input.pratsCaptured ?? previous.pratsCaptured ?? 0,
         isGhost: nextIsGhost,
         ghostPratsCaptured: nextGhostPrats,
       });
@@ -449,6 +451,7 @@ export class GameRoom {
       playerState.score = (playerState.score ?? 0) + prat.power;
       playerState.experience = (playerState.experience ?? 0) + XP_PER_PRAT;
       playerState.level = getLevelFromExperience(playerState.experience);
+      playerState.pratsCaptured = (playerState.pratsCaptured ?? 0) + 1;
     }
     playerState.x = captureX;
     playerState.y = captureY;

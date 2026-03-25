@@ -19,6 +19,8 @@ export interface PlayerInput {
   experience?: number;
   killsOctopus?: number;
   killsStingray?: number;
+  /** With SYNC_PROFILE: lifetime prat captures from Supabase (server increments each normal capture). */
+  pratsCaptured?: number;
   /** With SYNC_PROFILE: restore ghost after reconnect (persisted in Supabase like exp). */
   isGhost?: boolean;
   ghostPratsCaptured?: number;
@@ -42,6 +44,8 @@ export interface PlayerState {
   experience?: number;
   killsOctopus?: number;
   killsStingray?: number;
+  /** Lifetime normal-mode prat captures (persisted via client upsert like kills). */
+  pratsCaptured?: number;
   color?: number;
   /** Dead players respawn as ghosts until they capture enough word prats. */
   isGhost?: boolean;

@@ -106,6 +106,8 @@ export class GameScene extends Phaser.Scene {
   private level = 1;
   private killsOctopus = 0;
   private killsStingray = 0;
+  /** Lifetime normal-mode prat captures; mirrored from server and persisted like kills_octopus. */
+  private pratsCaptured = 0;
   private playerName: string | null = null;
   private octopuses = new Map<string, OctopusEntity>();
   private octopusesEnabled = true;
@@ -200,6 +202,7 @@ export class GameScene extends Phaser.Scene {
         this.level = existingPlayer.level;
         this.killsOctopus = existingPlayer.kills_octopus;
         this.killsStingray = existingPlayer.kills_stingray;
+        this.pratsCaptured = existingPlayer.prats_captured ?? 0;
         this.localIsGhost = existingPlayer.is_ghost ?? false;
         this.syncedGhostPratsCaptured = existingPlayer.ghost_prats_captured ?? 0;
       } else {
@@ -209,6 +212,7 @@ export class GameScene extends Phaser.Scene {
           level: 1,
           kills_octopus: 0,
           kills_stingray: 0,
+          prats_captured: 0,
           is_ghost: false,
           ghost_prats_captured: 0,
         });
@@ -255,6 +259,7 @@ export class GameScene extends Phaser.Scene {
         experience: this.experience,
         killsOctopus: this.killsOctopus,
         killsStingray: this.killsStingray,
+        pratsCaptured: this.pratsCaptured,
         ...(ghostRestoreFromDb ? ghostRestoreFromDb : {}),
       });
     } catch {
@@ -356,6 +361,7 @@ export class GameScene extends Phaser.Scene {
       level: this.level,
       kills_octopus: this.killsOctopus,
       kills_stingray: this.killsStingray,
+      prats_captured: this.pratsCaptured,
       is_ghost: this.localIsGhost,
       ghost_prats_captured: this.syncedGhostPratsCaptured,
     });
@@ -818,7 +824,8 @@ export class GameScene extends Phaser.Scene {
       this.experience = me.experience ?? 0;
       this.killsOctopus = me.killsOctopus ?? 0;
       this.killsStingray = me.killsStingray ?? 0;
-      this.scoreText.setText(`Prat capturés: ${this.score}`);
+      this.pratsCaptured = me.pratsCaptured ?? 0;
+      this.scoreText.setText(`Prat capturés: ${this.pratsCaptured}`);
       this.localIsGhost = me.isGhost ?? false;
       this.syncedGhostPratsCaptured = me.ghostPratsCaptured ?? 0;
       this.setLocalGhostCameraInversion(this.localIsGhost);

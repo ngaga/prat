@@ -16,6 +16,7 @@ import {
   WORLD_MARGIN_SIMULATION_UNITS,
 } from "@/lib/simulationSpace";
 import { playerIdToColor } from "@/lib/playerColor";
+import { endGameSession, startGameSession } from "@/lib/gameSessions";
 import { getPlayerByName, upsertPlayer } from "@/lib/players";
 import { MAX_PLAYER_NAME_LENGTH, VIEW_HEIGHT, VIEW_WIDTH } from "../config";
 import { phaserPixelsToSimulation, simulationToPhaserPixels } from "../simulationToDisplay";
@@ -164,6 +165,16 @@ export class GameScene extends Phaser.Scene {
   private remoteBoatGhostFx = new WeakMap<Phaser.GameObjects.Image, Phaser.FX.Controller>();
   /** Destroyed when the death overlay animation finishes or the scene shuts down. */
   private deathPratOverlayRoot: Phaser.GameObjects.Container | null = null;
+  private gameSessionId: string | null = null;
+  private gameSessionLoggedEnded = false;
+  private sessionBaseline = {
+    exp: 0,
+    killsOctopus: 0,
+    killsStingray: 0,
+    ghostPratsCaptured: 0,
+  };
+  private sessionActionsCount = 0;
+  private sessionPageHideHandler: (() => void) | null = null;
 
   constructor() {
     super({ key: "GameScene" });
@@ -226,10 +237,10 @@ export class GameScene extends Phaser.Scene {
     if (!this.playerName) {
       this.playerName = this.multiplayer.getPlayerId();
     }
-    let existingPlayerForGhost: Awaited<ReturnType<typeof getPlayerByName>> = null;
+    let resolvedPlayer: Awaited<ReturnType<typeof getPlayerByName>> = null;
     if (this.playerName) {
       const existingPlayer = await getPlayerByName(this.playerName);
-      existingPlayerForGhost = existingPlayer;
+      resolvedPlayer = existingPlayer;
       if (existingPlayer) {
         this.experience = existingPlayer.exp;
         this.level = existingPlayer.level;
@@ -251,13 +262,15 @@ export class GameScene extends Phaser.Scene {
         });
         if (!created) {
           console.warn("Failed to create player in database");
+        } else {
+          resolvedPlayer = await getPlayerByName(this.playerName);
         }
       }
     }
 
     const ghostRestoreFromDb =
-      existingPlayerForGhost?.is_ghost === true
-        ? { isGhost: true as const, ghostPratsCaptured: existingPlayerForGhost.ghost_prats_captured ?? 0 }
+      resolvedPlayer?.is_ghost === true
+        ? { isGhost: true as const, ghostPratsCaptured: resolvedPlayer.ghost_prats_captured ?? 0 }
         : undefined;
 
     this.boat = this.physics.add.sprite(0, 0, "boat");
@@ -301,6 +314,20 @@ export class GameScene extends Phaser.Scene {
 
     // Start SSE after the boat exists so damage VFX always has a world position (sprite or snapshot fallback).
     this.multiplayer.connectGameStream("default");
+
+    if (typeof window !== "undefined") {
+      // Tab close and many navigations skip Phaser shutdown; still a normal player exit (not a crash signal).
+      this.sessionPageHideHandler = () => {
+        if (!this.gameSessionLoggedEnded && this.gameSessionId) {
+          this.endGameSessionRecord(false);
+        }
+      };
+      window.addEventListener("pagehide", this.sessionPageHideHandler);
+    }
+
+    if (resolvedPlayer?.id) {
+      await this.beginGameSessionRecording(resolvedPlayer.id);
+    }
 
     this.scoreText = this.add
       .text(0, 0, formatPratsHudLabel(0), {
@@ -386,6 +413,43 @@ export class GameScene extends Phaser.Scene {
       .setName("level-text");
   }
 
+  private recordSessionAction(): void {
+    this.sessionActionsCount += 1;
+  }
+
+  private async beginGameSessionRecording(playerId: string): Promise<void> {
+    this.sessionBaseline = {
+      exp: this.experience,
+      killsOctopus: this.killsOctopus,
+      killsStingray: this.killsStingray,
+      ghostPratsCaptured: this.syncedGhostPratsCaptured,
+    };
+    const sessionId = await startGameSession(playerId);
+    if (!sessionId) return;
+    this.gameSessionId = sessionId;
+  }
+
+  private endGameSessionRecord(disconnectedUnexpectedly: boolean): void {
+    if (this.gameSessionLoggedEnded || !this.gameSessionId) return;
+    this.gameSessionLoggedEnded = true;
+    const sessionId = this.gameSessionId;
+    const expGained = Math.max(0, this.experience - this.sessionBaseline.exp);
+    const killsOctopus = Math.max(0, this.killsOctopus - this.sessionBaseline.killsOctopus);
+    const killsStingray = Math.max(0, this.killsStingray - this.sessionBaseline.killsStingray);
+    const ghostPratsCaptured = Math.max(
+      0,
+      this.syncedGhostPratsCaptured - this.sessionBaseline.ghostPratsCaptured
+    );
+    endGameSession(sessionId, {
+      actionsCount: this.sessionActionsCount,
+      expGained,
+      killsOctopus,
+      killsStingray,
+      ghostPratsCaptured,
+      disconnectedUnexpectedly,
+    });
+  }
+
   private async savePlayer(): Promise<void> {
     if (!this.playerName) return;
     await upsertPlayer({
@@ -438,6 +502,11 @@ export class GameScene extends Phaser.Scene {
 
   shutdown(): void {
     this.isSceneActive = false;
+    if (typeof window !== "undefined" && this.sessionPageHideHandler) {
+      window.removeEventListener("pagehide", this.sessionPageHideHandler);
+      this.sessionPageHideHandler = null;
+    }
+    this.endGameSessionRecord(false);
     stopBackgroundMusic(this.registry);
     this.savePlayer();
     this.input.off("pointerdown", this.onPointerDown, this);
@@ -729,6 +798,7 @@ export class GameScene extends Phaser.Scene {
     const startX = this.boat.x;
     const startY = this.boat.y;
     const ts = Date.now();
+    this.recordSessionAction();
     void this.multiplayer.sendGameInput({
       type: "SHOOT",
       timestamp: ts,
@@ -744,6 +814,7 @@ export class GameScene extends Phaser.Scene {
     const startX = this.boat.x;
     const startY = this.boat.y;
     const ts = Date.now();
+    this.recordSessionAction();
     void this.multiplayer.sendGameInput({
       type: "SHOOT",
       timestamp: ts,
@@ -762,6 +833,7 @@ export class GameScene extends Phaser.Scene {
     if (!octopus) return;
 
     const ts = Date.now();
+    this.recordSessionAction();
     void this.multiplayer.sendGameInput({
       type: "SHOOT",
       timestamp: ts,
@@ -775,6 +847,7 @@ export class GameScene extends Phaser.Scene {
   private onPointerDown(pointer: Phaser.Input.Pointer): void {
     const worldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
     if (pointer.button === 2) {
+      this.recordSessionAction();
       this.moveTargetX = this.clampToWorldBounds(worldPoint.x);
       this.moveTargetY = this.clampToWorldBounds(worldPoint.y);
       return;
@@ -1373,6 +1446,7 @@ export class GameScene extends Phaser.Scene {
 
       if (distance < PRAT_CAPTURE_RADIUS_PIXELS) {
         this.pratCaptureRequestSent.add(pratId);
+        this.recordSessionAction();
         void this.multiplayer.sendGameInput({
           type: "PRAT_CAPTURE",
           timestamp: Date.now(),

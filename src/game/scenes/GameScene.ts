@@ -61,6 +61,9 @@ const BAR_LABEL_WIDTH = 70;
 const BAR_X = 20 + BAR_LABEL_WIDTH;
 /** Max score delta treated as a single prat pickup (avoid full-screen burst on unrelated updates). */
 const SCORE_DELTA_PRAT_PICKUP_MAX = 4;
+/** Floating countdown text when capturing prats as ghost (Mario-style). */
+const GHOST_PRAT_FLOAT_DURATION_MS = 1500;
+const GHOST_PRAT_FLOAT_RISE_PIXELS = 60;
 /** Black tint on white boat texture (normal appearance). */
 const BOAT_SILHOUETTE_TINT = 0x000000;
 function shortId(uuid: string): string {
@@ -821,6 +824,28 @@ export class GameScene extends Phaser.Scene {
           this.spawnPratPickupBurst(boat.x, boat.y, false);
         }
       }
+      const nextGhostPratsCaptured = me.ghostPratsCaptured ?? 0;
+      if (this.hudSyncedFromServer && boat && me.isGhost) {
+        if (
+          nextGhostPratsCaptured > prevGhostPrats &&
+          nextGhostPratsCaptured === prevGhostPrats + 1
+        ) {
+          this.spawnGhostPratFloatingNumber(
+            boat.x,
+            boat.y,
+            GHOST_PRATS_TO_LEAVE - prevGhostPrats
+          );
+        }
+      }
+      if (
+        this.hudSyncedFromServer &&
+        boat &&
+        wasGhost &&
+        !me.isGhost &&
+        prevGhostPrats === GHOST_PRATS_TO_LEAVE - 1
+      ) {
+        this.spawnGhostPratFloatingNumber(boat.x, boat.y, 1);
+      }
       this.hudSyncedFromServer = true;
 
       const previousLevel = this.level;
@@ -1190,6 +1215,33 @@ export class GameScene extends Phaser.Scene {
         scale: 2,
         duration: isHeal ? 420 : 380,
         onComplete: () => flash.destroy(),
+      });
+    } catch {
+      // Scene tearing down
+    }
+  }
+
+  /** One Mario-style number per ghost prat pickup (remaining count for this capture). */
+  private spawnGhostPratFloatingNumber(worldX: number, worldY: number, displayValue: number): void {
+    if (!this.isSceneActive) return;
+    try {
+      const label = this.add.text(worldX, worldY, String(displayValue), {
+        fontFamily: "Arial",
+        fontSize: "32px",
+        fontStyle: "bold",
+        color: "#ffd700",
+        stroke: "#000000",
+        strokeThickness: 3,
+      });
+      label.setOrigin(0.5, 0.5);
+      label.setDepth(13);
+      this.tweens.add({
+        targets: label,
+        y: worldY - GHOST_PRAT_FLOAT_RISE_PIXELS,
+        alpha: 0,
+        duration: GHOST_PRAT_FLOAT_DURATION_MS,
+        ease: "Linear",
+        onComplete: () => label.destroy(),
       });
     } catch {
       // Scene tearing down

@@ -108,6 +108,10 @@ export class GameScene extends Phaser.Scene {
   private killsStingray = 0;
   /** Lifetime normal-mode prat captures; mirrored from server and persisted like kills_octopus. */
   private pratsCaptured = 0;
+  /** From authoritative game state `players`; includes the local client. */
+  private connectedPlayerCount = 1;
+  /** Below the Ko-fi button (top-right overlay); screen Y for fixed multiplayer label. */
+  private readonly multiplayerHudTopPx = 72;
   private playerName: string | null = null;
   private octopuses = new Map<string, OctopusEntity>();
   private octopusesEnabled = true;
@@ -295,7 +299,7 @@ export class GameScene extends Phaser.Scene {
       .setOrigin(1, 0)
       .setScrollFactor(0)
       .setName("multiplayer-status");
-    statusText.setPosition(this.scale.width - 20, 20);
+    statusText.setPosition(this.scale.width - 20, this.multiplayerHudTopPx);
 
     this.createLifeAndExperienceBars();
 
@@ -540,8 +544,10 @@ export class GameScene extends Phaser.Scene {
   private updateMultiplayerStatus(): void {
     const statusText = this.children.getByName("multiplayer-status") as Phaser.GameObjects.Text;
     if (statusText) {
-      statusText.setText(this.multiplayer.isActive() ? "Multijoueur actif" : "Solo");
-      statusText.setPosition(this.scale.width - 20, 20);
+      const n = this.connectedPlayerCount;
+      const label = n === 1 ? "1 joueur" : `${n} joueurs`;
+      statusText.setText(label);
+      statusText.setPosition(this.scale.width - 70, this.multiplayerHudTopPx);
     }
   }
 
@@ -879,6 +885,9 @@ export class GameScene extends Phaser.Scene {
       });
     }
     this.updateRemoteBoats(playersFromServer);
+
+    this.connectedPlayerCount = Object.keys(state.players ?? {}).length;
+    this.updateMultiplayerStatus();
   }
 
   private applyServerPratsState(state: SerializableGameState): void {

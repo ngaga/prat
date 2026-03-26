@@ -427,7 +427,7 @@ export class GameRoom {
         return;
       }
     }
-
+    // TODO: remove isHeal logic from this function.
     if (prat.isHeal) {
       const heal = prat.healAmount ?? 0;
       playerState.life = Math.min(MAX_LIFE, (playerState.life ?? MAX_LIFE) + heal);
@@ -451,6 +451,8 @@ export class GameRoom {
       playerState.score = (playerState.score ?? 0) + prat.power;
       playerState.experience = (playerState.experience ?? 0) + XP_PER_PRAT;
       playerState.level = getLevelFromExperience(playerState.experience);
+    }
+    if (!prat.isHeal) {
       playerState.pratsCaptured = (playerState.pratsCaptured ?? 0) + 1;
     }
     playerState.x = captureX;

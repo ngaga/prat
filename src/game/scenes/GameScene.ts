@@ -65,11 +65,11 @@ const SCORE_DELTA_PRAT_PICKUP_MAX = 4;
 const GHOST_PRAT_FLOAT_DURATION_MS = 1500;
 const GHOST_PRAT_FLOAT_RISE_PIXELS = 60;
 /** Full-screen PRAT transition overlay: scale-in then fade (hides invert when becoming ghost or day when reviving). */
-const DEATH_PRAT_SCALE_IN_MS = 3000;
-const DEATH_PRAT_FADE_OUT_MS = 500;
+const DEATH_PRAT_SCALE_IN_MS = 1000;
+const DEATH_PRAT_FADE_OUT_MS = 3000;
 const DEATH_PRAT_LABEL_TEXT = "PRAT...";
 const REVIVE_PRAT_SCALE_IN_MS = DEATH_PRAT_SCALE_IN_MS;
-const REVIVE_PRAT_FADE_OUT_MS = DEATH_PRAT_FADE_OUT_MS;
+const REVIVE_PRAT_FADE_OUT_MS = 500;
 const REVIVE_PRAT_LABEL_TEXT = "PRAT!";
 const DEATH_PRAT_OVERLAY_DEPTH = 100000;
 

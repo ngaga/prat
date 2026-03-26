@@ -99,25 +99,6 @@ function clampWorld(value: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-/** Respawn near a random map corner, ~50 simulation units from each edge at that corner. */
-function randomCornerSpawn(): { x: number; y: number } {
-  const min = -WORLD_SIZE + WORLD_MARGIN;
-  const max = WORLD_SIZE - WORLD_MARGIN;
-  const inset = 50;
-  const corners = [
-    { x: min + inset, y: min + inset },
-    { x: max - inset, y: min + inset },
-    { x: min + inset, y: max - inset },
-    { x: max - inset, y: max - inset },
-  ];
-  const corner = corners[Math.floor(Math.random() * 4)]!;
-  const jitter = () => (Math.random() - 0.5) * 80;
-  return {
-    x: clampWorld(corner.x + jitter()),
-    y: clampWorld(corner.y + jitter()),
-  };
-}
-
 function nearestPlayer(enemyX: number, enemyY: number, players: Map<string, PlayerState>): PlayerState | null {
   let best: PlayerState | null = null;
   let bestDist = Infinity;
@@ -366,9 +347,6 @@ export class GameRoom {
         } else {
           nextIsGhost = true;
           nextGhostPrats = raw;
-          const spawn = randomCornerSpawn();
-          nextX = spawn.x;
-          nextY = spawn.y;
           nextLife = MAX_LIFE;
         }
       }
@@ -775,10 +753,7 @@ export class GameRoom {
               victimLevel,
             });
           }
-          const spawn = randomCornerSpawn();
           playerState.life = MAX_LIFE;
-          playerState.x = spawn.x;
-          playerState.y = spawn.y;
           playerState.isGhost = true;
           playerState.ghostPratsCaptured = 0;
         }

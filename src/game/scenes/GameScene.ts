@@ -1,7 +1,7 @@
 import Phaser from "phaser";
 import { EventBus } from "../EventBus";
 import { MultiplayerManager, type RemotePlayer } from "../multiplayer/MultiplayerManager";
-import type { PratState, SerializableGameState } from "@/lib/gameTypes";
+import type { PlayerState, PratState, SerializableGameState } from "@/lib/gameTypes";
 import {
   getExperienceProgressTowardNextLevel,
   GHOST_PRATS_TO_LEAVE,
@@ -64,6 +64,26 @@ const SCORE_DELTA_PRAT_PICKUP_MAX = 4;
 /** Floating countdown text when capturing prats as ghost (Mario-style). */
 const GHOST_PRAT_FLOAT_DURATION_MS = 1500;
 const GHOST_PRAT_FLOAT_RISE_PIXELS = 60;
+/** Full-screen PRAT transition overlay: scale-in then fade (hides invert when becoming ghost or day when reviving). */
+const DEATH_PRAT_SCALE_IN_MS = 3000;
+const DEATH_PRAT_FADE_OUT_MS = 500;
+const DEATH_PRAT_LABEL_TEXT = "PRAT...";
+const REVIVE_PRAT_SCALE_IN_MS = DEATH_PRAT_SCALE_IN_MS;
+const REVIVE_PRAT_FADE_OUT_MS = DEATH_PRAT_FADE_OUT_MS;
+const REVIVE_PRAT_LABEL_TEXT = "PRAT!";
+const DEATH_PRAT_OVERLAY_DEPTH = 100000;
+
+type PratTransitionOverlayOptions = {
+  labelText: string;
+  scaleInDurationMs: number;
+  fadeOutDurationMs: number;
+};
+
+const DEFAULT_PRAT_TRANSITION_OVERLAY: PratTransitionOverlayOptions = {
+  labelText: DEATH_PRAT_LABEL_TEXT,
+  scaleInDurationMs: DEATH_PRAT_SCALE_IN_MS,
+  fadeOutDurationMs: DEATH_PRAT_FADE_OUT_MS,
+};
 /** Black tint on white boat texture (normal appearance). */
 const BOAT_SILHOUETTE_TINT = 0x000000;
 function shortId(uuid: string): string {
@@ -142,6 +162,8 @@ export class GameScene extends Phaser.Scene {
   private ghostCameraInversionActive = false;
   /** When the local player is alive, ghost remote boats use per-sprite inversion (camera is off). */
   private remoteBoatGhostFx = new WeakMap<Phaser.GameObjects.Image, Phaser.FX.Controller>();
+  /** Destroyed when the death overlay animation finishes or the scene shuts down. */
+  private deathPratOverlayRoot: Phaser.GameObjects.Container | null = null;
 
   constructor() {
     super({ key: "GameScene" });
@@ -457,6 +479,8 @@ export class GameScene extends Phaser.Scene {
     }
     this.ghostHudText?.destroy();
     this.ghostHudText = null;
+    this.deathPratOverlayRoot?.destroy(true);
+    this.deathPratOverlayRoot = null;
   }
 
   /**
@@ -479,6 +503,90 @@ export class GameScene extends Phaser.Scene {
       }
       this.ghostCameraInversionActive = false;
     }
+  }
+
+  private clearDeathPratOverlay(): void {
+    this.deathPratOverlayRoot?.destroy(true);
+    this.deathPratOverlayRoot = null;
+  }
+
+  /**
+   * Invert, ghost HUD, music, and local boat look after server player state is applied.
+   */
+  private applyLocalGhostPresentationAfterServer(me: PlayerState, previousWasGhost: boolean): void {
+    this.setLocalGhostCameraInversion(this.localIsGhost);
+    if (this.ghostHudText) {
+      if (me.isGhost) {
+        this.ghostHudText.setText(
+          `Ghost: ${me.ghostPratsCaptured ?? 0} / ${GHOST_PRATS_TO_LEAVE} prats to revive`
+        );
+        this.ghostHudText.setVisible(true);
+      } else {
+        this.ghostHudText.setVisible(false);
+      }
+    }
+    if (previousWasGhost !== this.localIsGhost) {
+      setBackgroundMusicForGhostMode(this.registry, this.localIsGhost);
+    }
+    if (this.boat) {
+      this.applyLocalBoatGhostVisual(this.boat, me.isGhost ?? false);
+    }
+  }
+
+  /**
+   * Black screen with large label text that scales in, then fades (invert/day switch happens underneath first).
+   */
+  private playPratTransitionOverlay(overrides?: Partial<PratTransitionOverlayOptions>): void {
+    if (!this.isSceneActive) return;
+    this.clearDeathPratOverlay();
+
+    const options: PratTransitionOverlayOptions = {
+      ...DEFAULT_PRAT_TRANSITION_OVERLAY,
+      ...overrides,
+    };
+
+    const width = this.scale.width;
+    const height = this.scale.height;
+    const root = this.add.container(0, 0);
+    this.deathPratOverlayRoot = root;
+    root.setScrollFactor(0);
+    root.setDepth(DEATH_PRAT_OVERLAY_DEPTH);
+
+    const background = this.add
+      .rectangle(width / 2, height / 2, width + 8, height + 8, 0x000000)
+      .setAlpha(1);
+    const fontPixels = Math.min(width, height) * 0.2;
+    const label = this.add
+      .text(width / 2, height / 2, options.labelText, {
+        fontFamily: "Arial Black, Arial, sans-serif",
+        fontSize: `${fontPixels}px`,
+        color: "#ffffff",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setAlpha(1);
+    label.setScale(0.32);
+
+    root.add([background, label]);
+
+    this.tweens.add({
+      targets: label,
+      scale: 1,
+      duration: options.scaleInDurationMs,
+      ease: "Back.easeOut",
+      onComplete: () => {
+        if (!this.isSceneActive || !this.deathPratOverlayRoot) return;
+        this.tweens.add({
+          targets: [background, label],
+          alpha: 0,
+          duration: options.fadeOutDurationMs,
+          ease: "Sine.easeInOut",
+          onComplete: () => {
+            this.clearDeathPratOverlay();
+          },
+        });
+      },
+    });
   }
 
   /**
@@ -822,6 +930,10 @@ export class GameScene extends Phaser.Scene {
       const boat = this.boat;
       const wasGhost = this.localIsGhost;
       const prevGhostPrats = this.syncedGhostPratsCaptured;
+      const becameGhostFromDeath =
+        this.hudSyncedFromServer && !wasGhost && (me.isGhost ?? false);
+      const revivedFromGhost =
+        this.hudSyncedFromServer && wasGhost && !(me.isGhost ?? false);
 
       if (this.hudSyncedFromServer && boat && !me.isGhost) {
         if (newScore > oldScore && newScore - oldScore <= SCORE_DELTA_PRAT_PICKUP_MAX) {
@@ -863,27 +975,6 @@ export class GameScene extends Phaser.Scene {
       this.scoreText.setText(formatPratsHudLabel(this.pratsCaptured));
       this.localIsGhost = me.isGhost ?? false;
       this.syncedGhostPratsCaptured = me.ghostPratsCaptured ?? 0;
-      this.setLocalGhostCameraInversion(this.localIsGhost);
-      if (this.ghostHudText) {
-        if (me.isGhost) {
-          this.ghostHudText.setText(
-            `Ghost: ${me.ghostPratsCaptured ?? 0} / ${GHOST_PRATS_TO_LEAVE} prats to revive`
-          );
-          this.ghostHudText.setVisible(true);
-        } else {
-          this.ghostHudText.setVisible(false);
-        }
-      }
-      if (wasGhost !== this.localIsGhost) {
-        setBackgroundMusicForGhostMode(this.registry, this.localIsGhost);
-      }
-      if (wasGhost !== this.localIsGhost || prevGhostPrats !== this.syncedGhostPratsCaptured) {
-        void this.savePlayer();
-      }
-      if (this.level > previousLevel) {
-        void this.savePlayer();
-        this.showLevelUpMessage(this.level);
-      }
 
       if (boat) {
         const serverX = simulationToPhaserPixels(me.x);
@@ -892,7 +983,26 @@ export class GameScene extends Phaser.Scene {
         if (dist > simulationToPhaserPixels(120)) {
           boat.setPosition(serverX, serverY);
         }
-        this.applyLocalBoatGhostVisual(boat, me.isGhost ?? false);
+      }
+
+      this.applyLocalGhostPresentationAfterServer(me, wasGhost);
+
+      if (wasGhost !== this.localIsGhost || prevGhostPrats !== this.syncedGhostPratsCaptured) {
+        void this.savePlayer();
+      }
+      if (this.level > previousLevel) {
+        void this.savePlayer();
+        this.showLevelUpMessage(this.level);
+      }
+
+      if (becameGhostFromDeath) {
+        this.playPratTransitionOverlay();
+      } else if (revivedFromGhost) {
+        this.playPratTransitionOverlay({
+          labelText: REVIVE_PRAT_LABEL_TEXT,
+          scaleInDurationMs: REVIVE_PRAT_SCALE_IN_MS,
+          fadeOutDurationMs: REVIVE_PRAT_FADE_OUT_MS,
+        });
       }
     }
 

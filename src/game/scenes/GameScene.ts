@@ -70,6 +70,10 @@ function shortId(uuid: string): string {
   return uuid.slice(0, 8);
 }
 
+function formatPratsHudLabel(pratsCaptured: number): string {
+  return `Prats : ${pratsCaptured}`;
+}
+
 function normalizeDirection(
   fromX: number,
   fromY: number,
@@ -277,13 +281,13 @@ export class GameScene extends Phaser.Scene {
     this.multiplayer.connectGameStream("default");
 
     this.scoreText = this.add
-      .text(0, 0, "Prat capturés: 0", {
+      .text(0, 0, formatPratsHudLabel(0), {
         fontSize: "20px",
         color: "#000",
       })
       .setScrollFactor(0)
       .setOrigin(0, 0)
-      .setPosition(20, 20);
+      .setPosition(40, 20);
 
     this.ghostHudText = this.add
       .text(20, 48, "", {
@@ -856,7 +860,7 @@ export class GameScene extends Phaser.Scene {
       this.killsOctopus = me.killsOctopus ?? 0;
       this.killsStingray = me.killsStingray ?? 0;
       this.pratsCaptured = me.pratsCaptured ?? 0;
-      this.scoreText.setText(`Prat capturés: ${this.pratsCaptured}`);
+      this.scoreText.setText(formatPratsHudLabel(this.pratsCaptured));
       this.localIsGhost = me.isGhost ?? false;
       this.syncedGhostPratsCaptured = me.ghostPratsCaptured ?? 0;
       this.setLocalGhostCameraInversion(this.localIsGhost);

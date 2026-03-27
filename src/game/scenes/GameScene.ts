@@ -87,6 +87,7 @@ const DEFAULT_PRAT_TRANSITION_OVERLAY: PratTransitionOverlayOptions = {
 };
 /** Black tint on white boat texture (normal appearance). */
 const BOAT_SILHOUETTE_TINT = 0x000000;
+
 function shortId(uuid: string): string {
   return uuid.slice(0, 8);
 }
@@ -276,6 +277,7 @@ export class GameScene extends Phaser.Scene {
     this.boat = this.physics.add.sprite(0, 0, "boat");
     this.boat.setCollideWorldBounds(true);
     this.boat.setScale(0.5);
+    this.boat.rotation = Math.PI;
     this.boat.setTint(BOAT_SILHOUETTE_TINT);
     this.setLocalGhostCameraInversion(this.localIsGhost);
     this.applyLocalBoatGhostVisual(this.boat, this.localIsGhost);
@@ -915,12 +917,16 @@ export class GameScene extends Phaser.Scene {
       direction.x * this.boatSpeed,
       direction.y * this.boatSpeed
     );
-    this.boat.rotation = Phaser.Math.Angle.Between(
+    const movementAngle = Phaser.Math.Angle.Between(
       this.boat.x,
       this.boat.y,
       this.moveTargetX,
       this.moveTargetY
     );
+    this.boat.rotation =
+      Math.abs(movementAngle) < Math.PI / 2
+        ? movementAngle + Math.PI
+        : movementAngle;
   }
 
   private clampToWorldBounds(value: number): number {

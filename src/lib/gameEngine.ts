@@ -191,9 +191,10 @@ export class GameRoom {
   }
 
   private defaultPlayer(playerId: string): PlayerState {
+    const { x, y } = randomInWorld();
     return {
-      x: 0,
-      y: 0,
+      x,
+      y,
       rotation: 0,
       score: 0,
       life: MAX_LIFE,

@@ -199,6 +199,11 @@ export class GameScene extends Phaser.Scene {
   private stingrays = new Map<string, StingrayEntity>();
   /** After first SSE snapshot, score delta triggers prat score pickup VFX (heal uses negative damage events). */
   private hudSyncedFromServer = false;
+  /**
+   * Until the first authoritative snapshot places the boat, skip MOVE so client (0,0) does not overwrite
+   * server random spawn.
+   */
+  private localBoatPositionSyncedFromAuthoritativeState = false;
   private localIsGhost = false;
   /** Mirrors server ghost prat count; used for Supabase persistence like experience. */
   private syncedGhostPratsCaptured = 0;
@@ -1020,7 +1025,7 @@ export class GameScene extends Phaser.Scene {
     const levelText = this.children.getByName("level-text") as Phaser.GameObjects.Text;
     if (levelText) levelText.setText(`Niv. ${this.level}`);
 
-    if (this.authoritativeGameServer && this.boat) {
+    if (this.authoritativeGameServer && this.boat && this.localBoatPositionSyncedFromAuthoritativeState) {
       const now = Date.now();
       if (now - this.lastMoveInputSentAt >= this.serverMoveThrottleMs) {
         this.lastMoveInputSentAt = now;
@@ -1120,6 +1125,7 @@ export class GameScene extends Phaser.Scene {
         if (dist > simulationToPhaserPixels(120)) {
           boat.setPosition(serverX, serverY);
         }
+        this.localBoatPositionSyncedFromAuthoritativeState = true;
         this.refreshLocalBoatDisplayScale();
       }
 

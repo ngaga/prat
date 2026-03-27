@@ -87,6 +87,49 @@ const DEFAULT_PRAT_TRANSITION_OVERLAY: PratTransitionOverlayOptions = {
 };
 /** Black tint on white boat texture (normal appearance). */
 const BOAT_SILHOUETTE_TINT = 0x000000;
+/** Level 1 map scale (same as previous fixed 0.5). */
+const BOAT_DISPLAY_SCALE_BASE = 0.5;
+/** How much larger the boat gets per level (capped). */
+const BOAT_DISPLAY_SCALE_PER_LEVEL = 0.1;
+const BOAT_DISPLAY_SCALE_MAX = 10;
+/** Name label offset above boat center at base scale (legacy layout). */
+const NAME_LABEL_OFFSET_AT_BASE_SCALE = 50;
+/** Remote life bar top Y is this many pixels above the name label center (smaller Y). */
+const REMOTE_LIFE_BAR_OFFSET_ABOVE_NAME_CENTER = 15;
+
+function boatDisplayScaleForLevel(level: number): number {
+  const safeLevel = Math.max(1, Math.floor(Number(level) || 1));
+  const scale = BOAT_DISPLAY_SCALE_BASE + BOAT_DISPLAY_SCALE_PER_LEVEL * (safeLevel - 1);
+  return Phaser.Math.Clamp(scale, BOAT_DISPLAY_SCALE_BASE, BOAT_DISPLAY_SCALE_MAX);
+}
+
+function nameLabelOffsetAboveBoatForScale(scale: number): number {
+  return (NAME_LABEL_OFFSET_AT_BASE_SCALE / BOAT_DISPLAY_SCALE_BASE) * scale;
+}
+
+const BOAT_NAME_FONT_SIZE_BASE_PX = 12;
+const BOAT_NAME_FONT_SIZE_MAX_PX = 28;
+
+function boatNameFontSizePxForScale(scale: number): number {
+  const ratio = scale / BOAT_DISPLAY_SCALE_BASE;
+  return Phaser.Math.Clamp(
+    Math.round(BOAT_NAME_FONT_SIZE_BASE_PX * ratio),
+    BOAT_NAME_FONT_SIZE_BASE_PX,
+    BOAT_NAME_FONT_SIZE_MAX_PX
+  );
+}
+
+const PLAYER_PROJECTILE_FONT_BASE_PX = 28;
+const PLAYER_PROJECTILE_FONT_MAX_PX = 52;
+
+function playerProjectileFontSizePxForScale(scale: number): number {
+  const ratio = scale / BOAT_DISPLAY_SCALE_BASE;
+  return Phaser.Math.Clamp(
+    Math.round(PLAYER_PROJECTILE_FONT_BASE_PX * ratio),
+    PLAYER_PROJECTILE_FONT_BASE_PX,
+    PLAYER_PROJECTILE_FONT_MAX_PX
+  );
+}
 
 function shortId(uuid: string): string {
   return uuid.slice(0, 8);
@@ -276,7 +319,7 @@ export class GameScene extends Phaser.Scene {
 
     this.boat = this.physics.add.sprite(0, 0, "boat");
     this.boat.setCollideWorldBounds(true);
-    this.boat.setScale(0.5);
+    this.refreshLocalBoatDisplayScale();
     this.boat.rotation = Math.PI;
     this.boat.setTint(BOAT_SILHOUETTE_TINT);
     this.setLocalGhostCameraInversion(this.localIsGhost);
@@ -676,6 +719,12 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  private refreshLocalBoatDisplayScale(): void {
+    if (!this.boat) return;
+    this.boat.setScale(boatDisplayScaleForLevel(this.level));
+    this.boat.refreshBody();
+  }
+
   private applyRemoteBoatGhostAppearance(sprite: Phaser.GameObjects.Image, remotePlayerIsGhost: boolean): void {
     const existingFx = this.remoteBoatGhostFx.get(sprite);
     if (this.localIsGhost) {
@@ -751,7 +800,6 @@ export class GameScene extends Phaser.Scene {
         if (!boatData) {
           if (!this.textures.exists("boat")) return;
           const sprite = this.add.image(data.x, data.y, "boat");
-          sprite.setScale(0.5);
           sprite.setDepth(5);
           sprite.setInteractive({ useHandCursor: true });
           const displayName = data.name && data.name.length <= MAX_PLAYER_NAME_LENGTH ? data.name : shortId(playerId);
@@ -766,16 +814,21 @@ export class GameScene extends Phaser.Scene {
           this.remoteBoats.set(playerId, { sprite, nameLabel, lifeBar });
           boatData = { sprite, nameLabel, lifeBar };
         }
+        const remoteScale = boatDisplayScaleForLevel(data.level ?? 1);
+        boatData.sprite.setScale(remoteScale);
         boatData.sprite.setPosition(data.x, data.y);
         boatData.sprite.setRotation(data.rotation);
         this.applyRemoteBoatGhostAppearance(boatData.sprite, data.isGhost ?? false);
         const displayName = data.name && data.name.length <= MAX_PLAYER_NAME_LENGTH ? data.name : shortId(playerId);
         boatData.nameLabel.setText(displayName);
-        boatData.nameLabel.setPosition(data.x, data.y - 50);
+        boatData.nameLabel.setStyle({ fontSize: `${boatNameFontSizePxForScale(remoteScale)}px` });
+        const labelOffset = nameLabelOffsetAboveBoatForScale(remoteScale);
+        boatData.nameLabel.setPosition(data.x, data.y - labelOffset);
         const lifeRatio = (data.life ?? MAX_LIFE) / MAX_LIFE;
         boatData.lifeBar?.clear();
         if (boatData.lifeBar) {
-          this.drawBar(boatData.lifeBar, data.x - 25, data.y - 65, 50, 6, 0x333333, 0xff0000, lifeRatio);
+          const remoteLifeBarTopY = data.y - labelOffset - REMOTE_LIFE_BAR_OFFSET_ABOVE_NAME_CENTER;
+          this.drawBar(boatData.lifeBar, data.x - 25, remoteLifeBarTopY, 50, 6, 0x333333, 0xff0000, lifeRatio);
         }
       }
       for (const playerId of this.remoteBoats.keys()) {
@@ -935,7 +988,12 @@ export class GameScene extends Phaser.Scene {
 
   update(): void {
     if (!this.boat || !this.boatNameLabel || !this.lifeBar || !this.experienceBar) return;
-    this.boatNameLabel.setPosition(this.boat.x, this.boat.y - 50);
+    const localNameFontPx = boatNameFontSizePxForScale(this.boat.scaleX);
+    this.boatNameLabel.setStyle({ fontSize: `${localNameFontPx}px` });
+    this.boatNameLabel.setPosition(
+      this.boat.x,
+      this.boat.y - nameLabelOffsetAboveBoatForScale(this.boat.scaleX)
+    );
     this.sea.setPosition(this.boat.x, this.boat.y);
     this.sea.tilePositionX = this.boat.x;
     this.sea.tilePositionY = this.boat.y;
@@ -1062,6 +1120,7 @@ export class GameScene extends Phaser.Scene {
         if (dist > simulationToPhaserPixels(120)) {
           boat.setPosition(serverX, serverY);
         }
+        this.refreshLocalBoatDisplayScale();
       }
 
       this.applyLocalGhostPresentationAfterServer(me, wasGhost);
@@ -1161,7 +1220,14 @@ export class GameScene extends Phaser.Scene {
       for (const [id, projectile] of Object.entries(state.projectiles)) {
         seen.add(id);
         const fromOctopus = projectile.shooterId.startsWith("octopus:");
-        const fontSize = fromOctopus ? "24px" : "28px";
+        let fontSize: string;
+        if (fromOctopus) {
+          fontSize = "24px";
+        } else {
+          const shooterLevel = state.players?.[projectile.shooterId]?.level ?? 1;
+          const shooterScale = boatDisplayScaleForLevel(shooterLevel);
+          fontSize = `${playerProjectileFontSizePxForScale(shooterScale)}px`;
+        }
         const projX = simulationToPhaserPixels(projectile.x);
         const projY = simulationToPhaserPixels(projectile.y);
         let text = this.serverProjectileSprites.get(id);

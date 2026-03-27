@@ -13,7 +13,7 @@ import {
   PRAT_SPAWN_INTERVAL_MS,
   PRAT_SPAWN_RADIUS,
   XP_PER_OCTOPUS_OR_STINGRAY,
-  XP_PER_PLAYER_LEVEL,
+  XP_PER_PLAYER_KILL_PER_VICTIM_LEVEL,
   XP_PER_PRAT,
 } from "@/lib/gameBalance";
 import {
@@ -742,7 +742,8 @@ export class GameRoom {
           const attacker = this.players.get(projectile.shooterId);
           if (attacker) {
             if (!attacker.isGhost) {
-              attacker.experience = (attacker.experience ?? 0) + victimLevel * XP_PER_PLAYER_LEVEL;
+              attacker.experience =
+                (attacker.experience ?? 0) + victimLevel * XP_PER_PLAYER_KILL_PER_VICTIM_LEVEL;
               attacker.level = getLevelFromExperience(attacker.experience);
               this.players.set(projectile.shooterId, attacker);
             }

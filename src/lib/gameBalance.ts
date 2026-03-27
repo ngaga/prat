@@ -3,7 +3,11 @@
 export const MAX_LIFE = 100;
 export const XP_PER_PRAT = 20;
 export const XP_PER_OCTOPUS_OR_STINGRAY = 100;
-export const XP_PER_PLAYER_LEVEL = 100;
+/**
+ * Experience added per victim level when a player eliminates another player (separate from EXPERIENCE_PER_LEVEL).
+ * Kept lower than prats/octopus rewards relative to effort so kills are not the main grind.
+ */
+export const XP_PER_PLAYER_KILL_PER_VICTIM_LEVEL = 25;
 /** Total experience needed per level step (constant for now). Level 1 at 0 XP, then +1 level every EXPERIENCE_PER_LEVEL points. */
 export const EXPERIENCE_PER_LEVEL = 200;
 export const PRAT_CAPTURE_RADIUS = 80;

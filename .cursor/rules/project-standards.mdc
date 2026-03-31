@@ -1,0 +1,23 @@
+---
+description: Core assistant behavior and coding discipline for this repository
+alwaysApply: true
+---
+
+# Project standards
+
+## Communication
+
+- Answer the user in French.
+- Write all code comments in English.
+- Do not use emoticons in comments or code.
+
+## Code changes
+
+- Change only what the task requires. No drive-by refactors or unrelated edits.
+- Prefer small, focused diffs. Reuse existing patterns, names, and file layout.
+- Avoid acronyms in identifiers (variable, function, type names) when a clear full phrase fits.
+
+## Explaining code in chat
+
+When referencing existing code in messages, use Cursor code citations with line numbers and path:
+`startLine:endLine:filepath`

@@ -1,0 +1,21 @@
+---
+description: Next.js, React, and Phaser conventions for this monorepo
+globs: "**/*.{ts,tsx}"
+alwaysApply: false
+---
+
+# TypeScript and frontend
+
+## Stack
+
+This repo uses Next.js (App Router under `src/app` where applicable), React, TypeScript, Tailwind CSS, Phaser for the game client, and Supabase for backend data when present.
+
+## Conventions
+
+- Match existing import style and component patterns in neighboring files.
+- Keep game logic in dedicated modules or Phaser scenes; avoid bloating route handlers or page components.
+- Prefer extending existing helpers in `lib/` over duplicating logic.
+
+## API and server code
+
+Route handlers and server-only utilities should stay aligned with existing patterns in `src/app/api` and `lib/` (naming, error responses, typing).

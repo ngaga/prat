@@ -16,13 +16,13 @@ Reference for humans and assistants (similar to a detailed `AGENTS.md`). Reposit
 ## Game architecture
 
 - **Simulation vs display**: gameplay and server logic use **simulation units**; Phaser/CSS pixels are for rendering and for inputs converted at the boundary. Do not mix the two.
-- **Key files**: `simulationSpace.ts`, `gameBalance.ts`, `simulationToDisplay.ts`, with the client boundary in `GameScene.ts`. See `README.md` for the section on simulation units and display.
+- **Key files**: under `apps/frontend/src/`: `lib/simulationSpace.ts`, `lib/gameBalance.ts`, `game/simulationToDisplay.ts`, with the client boundary in `game/scenes/GameScene.ts`. See `README.md` for the section on simulation units and display.
 
 ## TypeScript, React, Next.js
 
 - **Types**: honor the type system; avoid `any` except for small, documented cases.
-- **App Router**: API routes under `src/app/api/`; follow Next.js 16 conventions for handlers and dynamic segments.
-- **Lint**: `npm run lint` (ESLint + `eslint-config-next`: core-web-vitals + TypeScript).
+- **App Router**: API routes under `apps/frontend/src/app/api/`; follow Next.js 16 conventions for handlers and dynamic segments.
+- **Lint**: `pnpm run lint` from repo root (ESLint in `apps/frontend`; `eslint-config-next`: core-web-vitals + TypeScript). Alternatively `pnpm --filter frontend lint`.
 
 ## Naming
 

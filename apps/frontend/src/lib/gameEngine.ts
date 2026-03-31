@@ -335,8 +335,8 @@ export class GameRoom {
 
       let nextIsGhost = previous.isGhost ?? false;
       let nextGhostPrats = previous.ghostPratsCaptured ?? 0;
-      let nextX = previous.x;
-      let nextY = previous.y;
+      const nextX = previous.x;
+      const nextY = previous.y;
       let nextLife = previous.life ?? MAX_LIFE;
 
       if (input.isGhost === true) {

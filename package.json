@@ -6,7 +6,9 @@
     "dev:frontend": "pnpm --filter frontend dev",
     "dev:backend": "pnpm --filter backend start:dev",
     "build": "pnpm --filter frontend build",
+    "build:backend": "pnpm --filter backend build",
     "start": "pnpm --filter frontend start",
+    "start:backend": "pnpm --filter backend run start:prod",
     "lint": "pnpm --filter frontend lint"
   },
   "devDependencies": {

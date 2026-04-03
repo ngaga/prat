@@ -1,9 +1,42 @@
+# Blueprint: two Web Services (API first, then web).
+# After the first deploy, set NEXT_PUBLIC_BACKEND_URL on the web service to:
+#   https://<prat-api service name>.onrender.com
+# (no trailing slash). Dashboard: Environment for each service.
+
 services:
   - type: web
-    name: prat
+    name: prat-api
+    runtime: node
+    buildCommand: corepack enable && pnpm install && pnpm run build:backend
+    startCommand: pnpm run start:backend
+    healthCheckPath: /api/feature-flags/octopuses
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: NODE_ENV
+        value: production
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      # Optional: comma-separated allowed origins. If unset in production, CORS reflects the request origin.
+      - key: FRONTEND_ORIGIN
+        sync: false
+
+  - type: web
+    name: prat-web
     runtime: node
     buildCommand: corepack enable && pnpm install && pnpm run build
     startCommand: pnpm run start
     envVars:
       - key: NODE_VERSION
         value: "20"
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        sync: false
+      - key: NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+        sync: false
+      # Full URL of prat-api, e.g. https://prat-api.onrender.com
+      - key: NEXT_PUBLIC_BACKEND_URL
+        sync: false

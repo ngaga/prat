@@ -21,7 +21,7 @@ Reference for humans and assistants (similar to a detailed `AGENTS.md`). Reposit
 ## TypeScript, React, Next.js
 
 - **Types**: honor the type system; avoid `any` except for small, documented cases.
-- **App Router**: API routes under `apps/frontend/src/app/api/`; follow Next.js 16 conventions for handlers and dynamic segments.
+- **App Router**: game-only API routes under `apps/frontend/src/app/api/` (`game/stream`, `game/input`). Supabase-backed HTTP APIs live in **Nest** (`apps/backend`). Follow Next.js 16 conventions for remaining handlers.
 - **Lint**: `pnpm run lint` from repo root (ESLint in `apps/frontend`; `eslint-config-next`: core-web-vitals + TypeScript). Alternatively `pnpm --filter frontend lint`.
 
 ## Naming

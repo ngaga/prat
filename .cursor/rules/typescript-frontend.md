@@ -18,4 +18,4 @@ This repo is a pnpm monorepo. Next.js lives in `apps/frontend` (App Router under
 
 ## API and server code
 
-Route handlers and server-only utilities should stay aligned with existing patterns in `apps/frontend/src/app/api` and `apps/frontend/src/lib/` (naming, error responses, typing).
+Supabase persistence goes through **Nest** (`apps/backend`). Remaining Next route handlers are under `apps/frontend/src/app/api/game/` only. Align patterns in `apps/frontend/src/lib/` (naming, error responses, typing).

@@ -1,4 +1,4 @@
-import { GAME_LOOP_INTERVAL_MS, getGameEngine } from "@/lib/gameEngine";
+import { ensureServerGameFeatureFlagsLoaded, GAME_LOOP_INTERVAL_MS, getGameEngine } from "@/lib/gameEngine";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -11,6 +11,7 @@ export async function GET(request: Request): Promise<Response> {
     return new Response("Missing playerId query parameter", { status: 400 });
   }
 
+  await ensureServerGameFeatureFlagsLoaded();
   const engine = getGameEngine();
   const room = engine.getRoom(roomId);
   room.touchPlayer(playerId);

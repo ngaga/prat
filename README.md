@@ -1,58 +1,58 @@
 # Prat
 
-Jeu de bateaux pirates qui capturent des "Prat" (comme pirate sans le i et le e). Les Prat sont des créatures formées de lettres, plus fortes quand elles sont grosses ou en italique.
+Pirate ship game where you capture “Prats” (like “pirate” without _i_ and _e_). Prats are letter-shaped creatures; they are stronger when bigger or italic.
 
 ## Stack
 
 - Next.js 16 + React 19 + TypeScript (`apps/frontend`)
-- Phaser.js (jeu 2D)
+- Phaser.js (2D game)
 - Supabase (auth + DB)
 - Tailwind CSS
-- NestJS (`apps/backend`, API séparée en dev)
+- NestJS (`apps/backend`, **Supabase access**: players, sessions, feature flags)
 
-## Unités de simulation et affichage
+## Simulation units vs display
 
-Le jeu sépare **l’espace de simulation** (unités abstraites, type League of Legends) et **l’affichage** (pixels Phaser / navigateur). Toute la logique gameplay (serveur, collisions, vitesses) utilise des **unités de simulation** ; on ne convertit en pixels qu’au rendu (et l’inverse pour les entrées réseau).
+The game separates **simulation space** (abstract units, League-of-Legends-style) from **display** (Phaser pixels / browser). All gameplay logic (server, collisions, speed) uses **simulation units**; conversion to pixels happens only for rendering (and the inverse for network inputs).
 
-### Principes
+### Principles
 
-| Principe | Implémentation |
-|----------|----------------|
-| Pas de pixels d’écran dans la physique serveur | `apps/frontend/src/lib/gameEngine.ts` n’importe pas `displayConstants` |
-| Constantes spatiales partagées | `simulationSpace.ts`, `gameBalance.ts` sous `apps/frontend/src/lib/` (distances commentées « simulation units ») |
-| Canvas / zoom uniquement pour l’affichage | `VIEW_WIDTH` / `VIEW_HEIGHT` dans `displayConstants.ts` + `GameScene.updateCameraZoom()` (même dossier `apps/frontend/src/…`) |
-| Une couche de conversion rendu | `simulationToDisplay.ts` : `simulationToPhaserPixels`, `phaserPixelsToSimulation` |
-| Frontière client | `GameScene` : état SSE → `simulationToPhaserPixels` ; `MOVE` / `SHOOT` / `PRAT_CAPTURE` → `phaserPixelsToSimulation` |
-| Ratio par défaut | `SIMULATION_UNITS_TO_PHASER_PIXELS = 1` (équivalent historique 1 unité monde = 1 px Phaser) |
+| Principle | Implementation |
+|-----------|------------------|
+| No screen pixels in server physics | `apps/frontend/src/lib/gameEngine.ts` does not import `displayConstants` |
+| Shared spatial constants | `simulationSpace.ts`, `gameBalance.ts` under `apps/frontend/src/lib/` (distances documented as simulation units) |
+| Canvas / zoom for display only | `VIEW_WIDTH` / `VIEW_HEIGHT` in `displayConstants.ts` + `GameScene.updateCameraZoom()` (same `apps/frontend/src/…` tree) |
+| Single rendering conversion layer | `simulationToDisplay.ts`: `simulationToPhaserPixels`, `phaserPixelsToSimulation` |
+| Client boundary | `GameScene`: SSE state → `simulationToPhaserPixels`; `MOVE` / `SHOOT` / `PRAT_CAPTURE` → `phaserPixelsToSimulation` |
+| Default ratio | `SIMULATION_UNITS_TO_PHASER_PIXELS = 1` (historically ~1 world unit = 1 Phaser pixel) |
 
-### Fichiers
+### Key files
 
-- **`apps/frontend/src/lib/simulationSpace.ts`** — Monde, vitesses, rayons, portées joueur, paramètres client (vitesse bateau, seuil d’arrivée, rayon de clic ciblage).
-- **`apps/frontend/src/lib/gameBalance.ts`** — Progression, capture prat, octopus, etc. (distances en unités de simulation).
-- **`apps/frontend/src/lib/displayConstants.ts`** — Résolution logique du canvas + zoom ; **pas** la simulation.
-- **`apps/frontend/src/game/simulationToDisplay.ts`** — Point unique pour changer l’échelle globale affichage ↔ simulation sans toucher au serveur.
-- **`apps/frontend/src/game/scenes/GameScene.ts`** — Conversions aux frontières réseau ↔ Phaser.
+- **`apps/frontend/src/lib/simulationSpace.ts`** — World, speeds, radii, player ranges, client tuning (ship speed, arrival threshold, targeting click radius).
+- **`apps/frontend/src/lib/gameBalance.ts`** — Progression, prat capture, octopus, etc. (distances in simulation units).
+- **`apps/frontend/src/lib/displayConstants.ts`** — Logical canvas resolution + zoom; **not** simulation.
+- **`apps/frontend/src/game/simulationToDisplay.ts`** — Single place to change global display ↔ simulation scale without touching the authoritative server.
+- **`apps/frontend/src/game/scenes/GameScene.ts`** — Conversions at network ↔ Phaser boundaries.
 
-### Choix
+### Design choices
 
-1. **Nom « simulation units »** — Les nombres restent sur l’ancienne échelle (1 ≈ 1 « pixel monde » legacy) pour la balance ; pas de mélange avec des pixels CSS.
-2. **Portée max des lettres joueur** — `PLAYER_PROJECTILE_MAX_TRAVEL_SIMULATION_UNITS` (~1102) remplace l’ancien `√(VIEW²)/2` dans le moteur : la logique ne dépend plus de la résolution.
-3. **Zoom** — Indépendant du ratio `simulationToDisplay` : zoom = adapter la caméra à la fenêtre ; ratio = échelle monde → coordonnées Phaser.
-4. **`WorldSpace.ts`** — Héritage non utilisé ailleurs ; la conversion officielle est `simulationToDisplay.ts`.
+1. **Name “simulation units”** — Numbers stay on the legacy scale (1 ≈ 1 legacy “world pixel”) for balance; do not mix with CSS pixels.
+2. **Max player letter range** — `PLAYER_PROJECTILE_MAX_TRAVEL_SIMULATION_UNITS` (~1102) replaces the old `√(VIEW²)/2` in the engine so logic does not depend on resolution.
+3. **Zoom** — Independent of `simulationToDisplay` ratio: zoom fits the camera to the window; ratio is world → Phaser coordinates.
+4. **`WorldSpace.ts`** — Legacy inheritance not used elsewhere; the canonical conversion is `simulationToDisplay.ts`.
 
-### Ajuster
+### Tuning
 
-- **Gameplay** : `apps/frontend/src/lib/simulationSpace.ts` et `apps/frontend/src/lib/gameBalance.ts`.
-- **Rendu global** (tout plus grand/petit sans changer le serveur) : `SIMULATION_UNITS_TO_PHASER_PIXELS` dans `apps/frontend/src/game/simulationToDisplay.ts` (vérifier bounds Phaser et clamp).
+- **Gameplay**: `apps/frontend/src/lib/simulationSpace.ts` and `apps/frontend/src/lib/gameBalance.ts`.
+- **Global rendering** (bigger/smaller on screen without changing the server): `SIMULATION_UNITS_TO_PHASER_PIXELS` in `apps/frontend/src/game/simulationToDisplay.ts` (check Phaser bounds and clamping).
 
-### Limites
+### Caveats
 
-- Phaser / `physics.world.setBounds` restent en coordonnées **après** conversion (normal).
-- Tailles de police des sprites texte en pixels CSS (hors modèle « monde simulation »).
+- Phaser / `physics.world.setBounds` stay in coordinates **after** conversion (expected).
+- Text sprite font sizes use CSS pixels (outside the “simulation world” model).
 
-## Développement
+## Development
 
-Monorepo **pnpm** : le frontend Next.js est dans `apps/frontend`, l’API NestJS de démo dans `apps/backend`.
+**pnpm** monorepo: Next.js frontend in `apps/frontend`, NestJS API in `apps/backend`.
 
 ```bash
 corepack enable
@@ -60,51 +60,104 @@ pnpm install
 pnpm dev
 ```
 
-`pnpm dev` lance Next (port 3000) et Nest (port 3001) en parallèle. Front uniquement : `pnpm dev:frontend`. API uniquement : `pnpm dev:backend`.
+`pnpm dev` runs Next (port **3000**) and Nest together. **Game** routes (`/api/game/stream`, `/api/game/input`) stay on Next; **database-backed** APIs go through Nest. Frontend only: `pnpm dev:frontend`. API only: `pnpm dev:backend`.
+
+If your IDE sets `PORT` (e.g. **10000** for a preview), Nest binds to that port. The frontend dev script (`apps/frontend/scripts/dev.sh`) copies `PORT` into `NEXT_PUBLIC_NEST_PORT`, then clears `PORT` so Next still uses **3000**, while the browser calls Nest on the same port (e.g. `http://127.0.0.1:10000`). Override with `NEXT_PUBLIC_BACKEND_URL` or `BACKEND_URL` if needed.
 
 ```bash
 pnpm run build
 ```
 
-Variables d’environnement Next : fichier **`apps/frontend/.env.local`** (voir ci-dessous).
+### Environment (per app)
 
-## Déploiement
+Use **two** local env files (standard for monorepos): copy each `**/.env.example` to **`.env.local`** in the same folder. Do **not** put service-role secrets in the frontend file.
 
-### Render (SSL inclus)
+| App | File | Role |
+|-----|------|------|
+| Next | `apps/frontend/.env.local` | Only `NEXT_PUBLIC_*` (and optional non-public vars for server components if you add any). See `apps/frontend/.env.example`. |
+| Nest | `apps/backend/.env.local` | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, optional `FRONTEND_ORIGIN`. See `apps/backend/.env.example`. |
 
-1. Créer un compte sur [Render](https://render.com)
-2. New > Web Service, connecter le repo
-3. Build: `corepack enable && pnpm install && pnpm run build`
-4. Start: `pnpm run start`
-5. SSL automatique sur `*.onrender.com`
+A root `.env.local` is **not** required; you can delete it after migrating into the two files above.
 
-### Domaine gratuit + Cloudflare
+## Deployment
 
-- **Sous-domaine gratuit**: `prat.onrender.com` (fourni par Render)
-- **Domaine personnalisé**: Acheter un domaine (ex: Namecheap ~10€/an) ou utiliser [Freenom](https://www.freenom.com) (gratuit mais limité)
-- **Cloudflare**: Ajouter le site dans Cloudflare, pointer les DNS vers Render. SSL gratuit via Cloudflare.
+### Render (SSL included)
 
-### Variables d'environnement
+The app needs **two Web Services**: Nest (`prat-api`) and Next (`prat-web`). The root `render.yaml` defines both (Blueprint). Alternatively create them manually with the commands below.
 
-Créer `apps/frontend/.env.local` (requis pour le multijoueur) :
+**1. Backend (`prat-api` or your name)**
+
+| Setting | Value |
+|---------|--------|
+| Root directory | *(repo root, empty)* |
+| Build | `corepack enable && pnpm install && pnpm run build:backend` |
+| Start | `pnpm run start:backend` |
+| Health check path | `/api/feature-flags/octopuses` |
+
+**Environment (backend)**
+
+| Variable | Notes |
+|----------|--------|
+| `NODE_VERSION` | `20` |
+| `NODE_ENV` | `production` |
+| `SUPABASE_URL` | Supabase project URL (not secret) |
+| `SUPABASE_SERVICE_ROLE_KEY` | Secret; server only |
+
+Optional: `FRONTEND_ORIGIN` = comma-separated list of allowed origins (e.g. `https://prat-web.onrender.com`). If omitted in production, CORS reflects the browser `Origin` header so cross-origin calls from the Next app still work.
+
+**2. Frontend (`prat-web`)**
+
+| Setting | Value |
+|---------|--------|
+| Build | `corepack enable && pnpm install && pnpm run build` |
+| Start | `pnpm run start` |
+
+**Environment (frontend)**
+
+| Variable | Notes |
+|----------|--------|
+| `NODE_VERSION` | `20` |
+| `NEXT_PUBLIC_SUPABASE_URL` | Same project URL as Supabase |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Publishable / anon key |
+| `NEXT_PUBLIC_BACKEND_URL` | **HTTPS URL of the API service**, e.g. `https://prat-api.onrender.com` (no trailing slash). Set this **after** the API service is live. |
+
+**Order:** Deploy the API first, copy its public URL, add `NEXT_PUBLIC_BACKEND_URL` on the web service, then redeploy the web service so Next bakes the correct public URL into the client bundle.
+
+### Free hostname + Cloudflare
+
+- Render gives each service a URL like `https://<service-name>.onrender.com`.
+- You can point a custom domain at either service in the Render dashboard.
+
+### Local variable cheat sheet
+
+**`apps/frontend/.env.local`** — example:
 
 ```
 NEXT_PUBLIC_SUPABASE_URL=https://xxx.supabase.co
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=xxx
+# Optional in local dev if dev.sh sets NEXT_PUBLIC_NEST_PORT:
+# NEXT_PUBLIC_BACKEND_URL=http://127.0.0.1:3001
 ```
 
-Sans Supabase, le jeu fonctionne en solo. Avec ces variables, le multijoueur temps réel est activé (plusieurs joueurs sur la même partie).
+**`apps/backend/.env.local`** — example:
+
+```
+SUPABASE_URL=https://xxx.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=xxx
+```
+
+Without Supabase client keys in the frontend, the game can run solo without realtime multiplayer. With keys + service role + Nest running, persistence and flags work.
 
 ### Ko-fi
 
-Variable d'environnement `NEXT_PUBLIC_KOFI_USERNAME` ou modifier `apps/frontend/src/components/KofiButton.tsx`.
+Set `NEXT_PUBLIC_KOFI_USERNAME` or edit `apps/frontend/src/components/KofiButton.tsx`.
 
-### Musique de fond
+### Background music
 
-Ajouter un fichier `apps/frontend/public/sounds/music.mp3` (libre de droits). La musique démarre au premier clic ou touche (politique autoplay des navigateurs).
+Add `apps/frontend/public/sounds/music.mp3` (properly licensed). Playback starts on first click or keypress (browser autoplay policy).
 
-### Multijoueur (Supabase)
+### Multiplayer (Supabase)
 
-1. Créer un projet sur [Supabase](https://supabase.com)
-2. Récupérer URL et clé anon dans Settings > API
-3. Ajouter `NEXT_PUBLIC_SUPABASE_URL` et `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` dans Render
+1. Create a project on [Supabase](https://supabase.com)
+2. Copy URL and anon / publishable key from Settings > API
+3. On Render: set `SUPABASE_*` on the API service and `NEXT_PUBLIC_*` on the web service (and `NEXT_PUBLIC_BACKEND_URL` after the API URL is known)

@@ -17,6 +17,7 @@ import {
 } from "@/lib/simulationSpace";
 import { playerIdToColor } from "@/lib/playerColor";
 import { endGameSession, startGameSession } from "@/lib/gameSessions";
+import { coerceClientFeatureFlag } from "@/lib/featureFlags";
 import { getPlayerByName, upsertPlayer } from "@/lib/players";
 import { MAX_PLAYER_NAME_LENGTH, VIEW_HEIGHT, VIEW_WIDTH } from "../config";
 import { phaserPixelsToSimulation, simulationToPhaserPixels } from "../simulationToDisplay";
@@ -230,8 +231,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   init(data: { octopusesEnabled?: boolean; stingraysEnabled?: boolean; playerName?: string }): void {
-    this.octopusesEnabled = data?.octopusesEnabled ?? true;
-    this.stingraysEnabled = data?.stingraysEnabled ?? true;
+    this.octopusesEnabled = coerceClientFeatureFlag(data?.octopusesEnabled);
+    this.stingraysEnabled = coerceClientFeatureFlag(data?.stingraysEnabled);
     this.playerName = data?.playerName ?? null;
   }
 
@@ -1224,8 +1225,11 @@ export class GameScene extends Phaser.Scene {
     try {
       const seen = new Set<string>();
       for (const [id, projectile] of Object.entries(state.projectiles)) {
-        seen.add(id);
         const fromOctopus = projectile.shooterId.startsWith("octopus:");
+        if (fromOctopus && !this.octopusesEnabled) {
+          continue;
+        }
+        seen.add(id);
         let fontSize: string;
         if (fromOctopus) {
           fontSize = "24px";
@@ -1324,7 +1328,6 @@ export class GameScene extends Phaser.Scene {
 
   /** Syncs stingray entities from authoritative server state (SSE). */
   private applyServerStingrayState(state: SerializableGameState): void {
-    if (!this.textures.exists("stingray")) return;
     if (!this.stingraysEnabled) {
       for (const stingray of this.stingrays.values()) {
         stingray.sprite.destroy();
@@ -1333,6 +1336,7 @@ export class GameScene extends Phaser.Scene {
       this.stingrays.clear();
       return;
     }
+    if (!this.textures.exists("stingray")) return;
     try {
       const stingraysFromServer = state.stingrays ?? {};
       const seenIds = new Set<string>();
@@ -1384,7 +1388,6 @@ export class GameScene extends Phaser.Scene {
 
   /** Syncs octopus entities from authoritative server state (SSE). */
   private applyServerOctopusState(state: SerializableGameState): void {
-    if (!this.textures.exists("octopus")) return;
     if (!this.octopusesEnabled) {
       for (const octopus of this.octopuses.values()) {
         octopus.sprite.destroy();
@@ -1393,6 +1396,7 @@ export class GameScene extends Phaser.Scene {
       this.octopuses.clear();
       return;
     }
+    if (!this.textures.exists("octopus")) return;
     try {
       const seenIds = new Set<string>();
       for (const [id, enemy] of Object.entries(state.enemies)) {

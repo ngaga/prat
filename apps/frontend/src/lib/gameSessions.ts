@@ -1,3 +1,5 @@
+import { getBackendBaseUrl } from "@/lib/backendBaseUrl";
+
 export interface EndGameSessionPayload {
   actionsCount: number;
   expGained: number;
@@ -9,8 +11,12 @@ export interface EndGameSessionPayload {
 
 export async function startGameSession(playerId: string): Promise<string | null> {
   try {
-    const baseUrl = typeof window !== "undefined" ? window.location.origin : "";
-    const response = await fetch(`${baseUrl}/api/game-sessions`, {
+    const base = getBackendBaseUrl();
+    if (!base) {
+      console.error("startGameSession: backend URL not configured");
+      return null;
+    }
+    const response = await fetch(`${base}/api/game-sessions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ playerId }),
@@ -31,10 +37,13 @@ export async function startGameSession(playerId: string): Promise<string | null>
  * Persists session end; uses keepalive so the request can finish during tab close.
  */
 export function endGameSession(sessionId: string, payload: EndGameSessionPayload): void {
-  const baseUrl = typeof window !== "undefined" ? window.location.origin : "";
+  const base = getBackendBaseUrl();
+  if (!base) {
+    return;
+  }
   const body = JSON.stringify(payload);
   try {
-    void fetch(`${baseUrl}/api/game-sessions/${encodeURIComponent(sessionId)}`, {
+    void fetch(`${base}/api/game-sessions/${encodeURIComponent(sessionId)}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body,

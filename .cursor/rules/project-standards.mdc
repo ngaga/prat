@@ -8,14 +8,16 @@ alwaysApply: true
 ## Communication
 
 - Answer the user in French.
-- Write all code comments in English.
+- Write all code comments and documentation (eg. readme, .md) in English.
 - Do not use emoticons in comments or code.
+
 
 ## Code changes
 
 - Change only what the task requires. No drive-by refactors or unrelated edits.
 - Prefer small, focused diffs. Reuse existing patterns, names, and file layout.
 - Avoid acronyms in identifiers (variable, function, type names) when a clear full phrase fits.
+- Write all user fronted user interface messages in English.
 
 ## Explaining code in chat
 

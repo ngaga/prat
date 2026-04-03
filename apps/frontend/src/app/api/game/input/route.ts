@@ -1,4 +1,4 @@
-import { getGameEngine } from "@/lib/gameEngine";
+import { ensureServerGameFeatureFlagsLoaded, getGameEngine } from "@/lib/gameEngine";
 import type { PlayerInput, PlayerInputType } from "@/lib/gameTypes";
 
 export const runtime = "nodejs";
@@ -50,6 +50,7 @@ export async function POST(request: Request): Promise<Response> {
     });
   }
 
+  await ensureServerGameFeatureFlagsLoaded();
   const engine = getGameEngine();
   const room = engine.getRoom(roomId);
   const result = room.handlePlayerInput(playerId, input);

@@ -30,6 +30,7 @@ import { playerIdToColor } from "@/lib/playerColor";
 import {
   getOctopusesSpawnOnServer,
   getStingraysSpawnOnServer,
+  refreshServerGameFeatureFlagsFromDatabase,
   startServerFeatureFlagsRefreshLoop,
 } from "@/lib/serverGameFeatureFlags";
 import type {
@@ -537,6 +538,17 @@ export class GameRoom {
   }
 
   private updateEnemiesAndSpawns(now: number): void {
+    if (!getOctopusesSpawnOnServer()) {
+      this.enemies.clear();
+      for (const projectileId of [...this.projectiles.keys()]) {
+        const projectile = this.projectiles.get(projectileId);
+        if (projectile && projectileIsFromOctopus(projectile)) {
+          this.projectiles.delete(projectileId);
+        }
+      }
+      return;
+    }
+
     const toRemoveEnemy: string[] = [];
     for (const enemy of this.enemies.values()) {
       if (now - enemy.spawnTime >= OCTOPUS_LIFETIME_MS) {
@@ -572,13 +584,15 @@ export class GameRoom {
   }
 
   private updateStingrays(now: number): void {
+    if (!getStingraysSpawnOnServer()) {
+      this.stingrays.clear();
+      return;
+    }
+
     const deltaSeconds = GAME_LOOP_INTERVAL_MS / 1000;
     const toRemove: string[] = [];
 
-    if (
-      getStingraysSpawnOnServer() &&
-      now - this.lastStingraySpawnTime >= STINGRAY_SPAWN_INTERVAL_MS
-    ) {
+    if (now - this.lastStingraySpawnTime >= STINGRAY_SPAWN_INTERVAL_MS) {
       this.lastStingraySpawnTime = now;
       this.spawnStingray(now);
     }
@@ -873,9 +887,24 @@ declare global {
   var __pratGameEngine: GameEngine | undefined;
 }
 
+let serverFeatureFlagsBootstrapPromise: Promise<void> | null = null;
+
+/**
+ * Await before the first game room tick so octopus/stingray spawns respect Supabase flags immediately.
+ * Safe to call from every API route; concurrent calls share one bootstrap.
+ */
+export async function ensureServerGameFeatureFlagsLoaded(): Promise<void> {
+  if (!serverFeatureFlagsBootstrapPromise) {
+    serverFeatureFlagsBootstrapPromise = (async () => {
+      await refreshServerGameFeatureFlagsFromDatabase();
+      startServerFeatureFlagsRefreshLoop();
+    })();
+  }
+  await serverFeatureFlagsBootstrapPromise;
+}
+
 export function getGameEngine(): GameEngine {
   if (!globalThis.__pratGameEngine) {
-    startServerFeatureFlagsRefreshLoop();
     globalThis.__pratGameEngine = new GameEngine();
   }
   return globalThis.__pratGameEngine;

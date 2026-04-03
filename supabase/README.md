@@ -2,11 +2,12 @@
 
 ## Environment variables
 
-Add to your project `.env.local` (not committed):
+Use **`apps/backend/.env.local`** (not committed) for server secrets. See `apps/backend/.env.example`.
 
 | Variable | Purpose |
 |----------|---------|
-| `SUPABASE_SERVICE_ROLE_KEY` | Server-only. Used by API routes. **Never** expose this to the browser or `NEXT_PUBLIC_*`. |
+| `SUPABASE_SERVICE_ROLE_KEY` | Server-only. Used by the **Nest** backend. **Never** expose this to the browser or `NEXT_PUBLIC_*`. |
+| `SUPABASE_URL` | Supabase project URL on the backend. |
 
 ## Migrations
 
@@ -23,14 +24,15 @@ supabase db push
 
 ## Security model
 
-The database is not queried from the client with anon keys for game data. Next.js API routes (`/api/feature-flags/*`, `/api/players/*`) use the **service role** key on the server.
+The database is not queried from the client with anon keys for game data. The **Nest** app (`apps/backend`, prefix `/api`) uses the **service role** key on the server for flags, players, and game sessions.
 
 ## Feature flags
 
-Rows live in `feature_flags`. The app reads them via:
+Rows live in `feature_flags`. The frontend reads them via the Nest base URL, e.g.:
 
-- `/api/feature-flags/octopuses`
-- `/api/feature-flags/stingrays`
+- `{BACKEND}/api/feature-flags/octopuses`
+- `{BACKEND}/api/feature-flags/stingrays`
+- `{BACKEND}/api/feature-flags/server` (bundled, used by the in-process game engine refresh loop)
 
 The game server (`gameEngine`) refreshes the same flag keys so octopus/stingray spawns match the database.
 

@@ -1,3 +1,5 @@
+import { getBackendBaseUrl } from "@/lib/backendBaseUrl";
+
 export interface Player {
   id: string;
   name: string;
@@ -12,8 +14,11 @@ export interface Player {
 
 export async function getPlayerByName(name: string): Promise<Player | null> {
   try {
-    const baseUrl = typeof window !== "undefined" ? window.location.origin : "";
-    const response = await fetch(`${baseUrl}/api/players/${encodeURIComponent(name.trim())}`);
+    const base = getBackendBaseUrl();
+    if (!base) {
+      return null;
+    }
+    const response = await fetch(`${base}/api/players/${encodeURIComponent(name.trim())}`);
     const data = (await response.json()) as Player | null;
     return data;
   } catch (error) {
@@ -33,8 +38,11 @@ export async function upsertPlayer(player: {
   ghost_prats_captured?: number;
 }): Promise<boolean> {
   try {
-    const baseUrl = typeof window !== "undefined" ? window.location.origin : "";
-    const response = await fetch(`${baseUrl}/api/players`, {
+    const base = getBackendBaseUrl();
+    if (!base) {
+      return false;
+    }
+    const response = await fetch(`${base}/api/players`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

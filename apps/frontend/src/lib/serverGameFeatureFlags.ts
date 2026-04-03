@@ -1,4 +1,4 @@
-import { createAdminClient } from "@/lib/supabaseAdmin";
+import { getBackendBaseUrl } from "@/lib/backendBaseUrl";
 
 let octopusesSpawnOnServer = true;
 let stingraysSpawnOnServer = true;
@@ -12,31 +12,50 @@ export function getStingraysSpawnOnServer(): boolean {
   return stingraysSpawnOnServer;
 }
 
+function parseBundledFlag(value: unknown): boolean | undefined {
+  if (value === true) {
+    return true;
+  }
+  if (value === false) {
+    return false;
+  }
+  return undefined;
+}
+
 export async function refreshServerGameFeatureFlagsFromDatabase(): Promise<void> {
+  const base = getBackendBaseUrl();
+  if (!base) {
+    return;
+  }
   try {
-    const supabase = createAdminClient();
-    const { data } = await supabase
-      .from("feature_flags")
-      .select("key, value")
-      .in("key", ["octopuses_enabled", "stingrays_enabled"]);
-    for (const row of data ?? []) {
-      if (row.key === "octopuses_enabled") {
-        octopusesSpawnOnServer = row.value === true;
-      }
-      if (row.key === "stingrays_enabled") {
-        stingraysSpawnOnServer = row.value === true;
-      }
+    const response = await fetch(`${base}/api/feature-flags/server`, { cache: "no-store" });
+    if (!response.ok) {
+      octopusesSpawnOnServer = false;
+      stingraysSpawnOnServer = false;
+      return;
+    }
+    const data: unknown = await response.json();
+    if (typeof data !== "object" || data === null) {
+      return;
+    }
+    const record = data as Record<string, unknown>;
+    const nextOctopuses = parseBundledFlag(record.octopusesEnabled);
+    const nextStingrays = parseBundledFlag(record.stingraysEnabled);
+    if (nextOctopuses !== undefined) {
+      octopusesSpawnOnServer = nextOctopuses;
+    }
+    if (nextStingrays !== undefined) {
+      stingraysSpawnOnServer = nextStingrays;
     }
   } catch {
-    // Keep previous values if Supabase is unavailable
+    // Keep previous values if the API is unavailable
   }
 }
 
-/** Call once from the game engine so server spawns match database feature flags. */
+/** Call after the first successful refresh (see ensureServerGameFeatureFlagsLoaded). */
 export function startServerFeatureFlagsRefreshLoop(): void {
   if (refreshLoopStarted) return;
   refreshLoopStarted = true;
-  void refreshServerGameFeatureFlagsFromDatabase();
   setInterval(() => {
     void refreshServerGameFeatureFlagsFromDatabase();
   }, 30_000);

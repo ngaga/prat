@@ -8,7 +8,6 @@ services:
     name: prat-api
     runtime: node
     plan: free
-    region: frankfurt
     buildCommand: corepack enable && pnpm install && pnpm run build:backend
     startCommand: pnpm run start:backend
     healthCheckPath: /api/feature-flags/octopuses
@@ -29,7 +28,6 @@ services:
     name: prat-web
     runtime: node
     plan: free
-    region: frankfurt
     buildCommand: corepack enable && pnpm install && pnpm run build
     startCommand: pnpm run start
     envVars:

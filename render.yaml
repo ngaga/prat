@@ -10,7 +10,8 @@ services:
     plan: free
     region: frankfurt
     buildCommand: corepack enable && pnpm install && pnpm run build:backend
-    startCommand: pnpm run start:backend
+    # Avoid pnpm at runtime: Corepack may try to download pnpm from npm (can time out on Render).
+    startCommand: cd apps/backend && node dist/main
     healthCheckPath: /api/feature-flags/octopuses
     envVars:
       - key: NODE_VERSION
@@ -31,7 +32,8 @@ services:
     plan: free
     region: frankfurt
     buildCommand: corepack enable && pnpm install && pnpm run build
-    startCommand: pnpm run start
+    # Avoid pnpm at runtime: Corepack may try to download pnpm from npm (can time out on Render).
+    startCommand: node apps/frontend/node_modules/next/dist/bin/next start apps/frontend -H 0.0.0.0 -p $PORT
     envVars:
       - key: NODE_VERSION
         value: "20"

@@ -1,7 +1,7 @@
 import Phaser from "phaser";
 import { EventBus } from "../EventBus";
 import { MultiplayerManager, type RemotePlayer } from "../multiplayer/MultiplayerManager";
-import type { PlayerState, PratState, SerializableGameState } from "@/lib/gameTypes";
+import type { PlayerState, PratState, SerializableGameState, TownState } from "@/lib/gameTypes";
 import {
   getExperienceProgressTowardNextLevel,
   GHOST_PRATS_TO_LEAVE,
@@ -26,6 +26,12 @@ import { setBackgroundMusicForGhostMode, stopBackgroundMusic } from "../backgrou
 interface PratEntity {
   id: string;
   text: Phaser.GameObjects.Text;
+}
+
+interface TownEntity {
+  id: string;
+  text: Phaser.GameObjects.Text;
+  pulse?: Phaser.GameObjects.Arc;
 }
 
 interface RemoteBoatData {
@@ -136,8 +142,8 @@ function shortId(uuid: string): string {
   return uuid.slice(0, 8);
 }
 
-function formatPratsHudLabel(pratsCaptured: number): string {
-  return `Prats : ${pratsCaptured}`;
+function formatPratsHudLabel(pratsCaptured: number, pratSalvos: number): string {
+  return `Prats: ${pratsCaptured}  Salvos: ${pratSalvos}`;
 }
 
 function normalizeDirection(
@@ -161,6 +167,8 @@ export class GameScene extends Phaser.Scene {
   private readonly moveArrivalThreshold = simulationToPhaserPixels(PLAYER_MOVE_ARRIVAL_THRESHOLD_SIMULATION_UNITS);
   private pratEntities = new Map<string, PratEntity>();
   private pratCaptureRequestSent = new Set<string>();
+  private townEntities = new Map<string, TownEntity>();
+  private hoveredTownId: string | null = null;
   private score: number = 0;
   private scoreText!: Phaser.GameObjects.Text;
   private readonly boatSpeed = simulationToPhaserPixels(PLAYER_BOAT_SPEED_SIMULATION_UNITS_PER_SECOND);
@@ -181,6 +189,8 @@ export class GameScene extends Phaser.Scene {
   private killsStingray = 0;
   /** Lifetime normal-mode prat captures; mirrored from server and persisted like kills_octopus. */
   private pratsCaptured = 0;
+  /** Spendable resource used to send salvos to towns; authoritative on server. */
+  private pratSalvos = 0;
   /** From authoritative game state `players`; includes the local client. */
   private connectedPlayerCount = 1;
   /** Below the Ko-fi button (top-right overlay); screen Y for fixed multiplayer label. */
@@ -244,6 +254,7 @@ export class GameScene extends Phaser.Scene {
 
     this.createWorldBorders();
     this.input.on("pointerdown", this.onPointerDown, this);
+    this.input.on("pointermove", this.onPointerMove, this);
     this.game.canvas.addEventListener("contextmenu", (event) => event.preventDefault());
 
     this.multiplayer = new MultiplayerManager({
@@ -381,7 +392,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.scoreText = this.add
-      .text(0, 0, formatPratsHudLabel(0), {
+      .text(0, 0, formatPratsHudLabel(0, 0), {
         fontSize: "20px",
         color: "#000",
       })
@@ -561,6 +572,7 @@ export class GameScene extends Phaser.Scene {
     stopBackgroundMusic(this.registry);
     this.savePlayer();
     this.input.off("pointerdown", this.onPointerDown, this);
+    this.input.off("pointermove", this.onPointerMove, this);
     this.scale.off("resize", this.updateCameraZoom, this);
     for (const text of this.serverProjectileSprites.values()) {
       text.destroy();
@@ -574,6 +586,11 @@ export class GameScene extends Phaser.Scene {
     }
     this.pratEntities.clear();
     this.pratCaptureRequestSent.clear();
+    for (const entity of this.townEntities.values()) {
+      entity.text.destroy();
+      entity.pulse?.destroy();
+    }
+    this.townEntities.clear();
     for (const octopus of this.octopuses.values()) {
       octopus.sprite.destroy();
       octopus.lifeBar.destroy();
@@ -918,8 +935,31 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  private onPointerMove(pointer: Phaser.Input.Pointer): void {
+    const worldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+    const hoverTownId = this.findTownAtWorldPoint(worldPoint.x, worldPoint.y);
+    if (hoverTownId !== this.hoveredTownId) {
+      this.hoveredTownId = hoverTownId;
+      this.input.setDefaultCursor(this.hoveredTownId ? "crosshair" : "default");
+    }
+  }
+
+  private findTownAtWorldPoint(worldX: number, worldY: number): string | null {
+    const radius = 44;
+    for (const [townId, town] of this.townEntities) {
+      const d = Phaser.Math.Distance.Between(worldX, worldY, town.text.x, town.text.y);
+      if (d <= radius) return townId;
+    }
+    return null;
+  }
+
   private handleLeftClick(worldX: number, worldY: number): void {
     if (this.localIsGhost) return;
+    const townId = this.findTownAtWorldPoint(worldX, worldY);
+    if (townId) {
+      this.sendTownSalvo(townId);
+      return;
+    }
     const clickRadius = CLICK_TARGET_RADIUS;
     for (const [playerId, boatData] of this.remoteBoats) {
       const distance = Phaser.Math.Distance.Between(worldX, worldY, boatData.sprite.x, boatData.sprite.y);
@@ -947,6 +987,66 @@ export class GameScene extends Phaser.Scene {
       }
     }
     this.fireLettersAtPosition(worldX, worldY);
+  }
+
+  private sendTownSalvo(townId: string): void {
+    if (this.pratSalvos <= 0) {
+      this.spawnEphemeralHudMessage("Not enough salvos.");
+      return;
+    }
+    this.recordSessionAction();
+    void this.multiplayer.sendGameInput({
+      type: "TOWN_SEND_SALVO",
+      timestamp: Date.now(),
+      townId,
+    });
+    this.spawnTownPulse(townId);
+  }
+
+  private spawnTownPulse(townId: string): void {
+    if (!this.isSceneActive) return;
+    const entity = this.townEntities.get(townId);
+    if (!entity) return;
+    try {
+      entity.pulse?.destroy();
+      const pulse = this.add.circle(entity.text.x, entity.text.y, 46, 0x2f77ff, 0.25);
+      pulse.setDepth(8);
+      entity.pulse = pulse;
+      this.tweens.add({
+        targets: pulse,
+        alpha: 0,
+        scale: 1.8,
+        duration: 420,
+        ease: "Sine.easeOut",
+        onComplete: () => {
+          pulse.destroy();
+          if (entity.pulse === pulse) entity.pulse = undefined;
+        },
+      });
+    } catch {
+      // Scene tearing down
+    }
+  }
+
+  private spawnEphemeralHudMessage(message: string): void {
+    if (!this.isSceneActive) return;
+    try {
+      const label = this.add
+        .text(this.scale.width / 2, 110, message, { fontSize: "16px", color: "#1f2d3d" })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setDepth(1000);
+      this.tweens.add({
+        targets: label,
+        alpha: 0,
+        y: label.y - 18,
+        duration: 900,
+        ease: "Sine.easeInOut",
+        onComplete: () => label.destroy(),
+      });
+    } catch {
+      // Scene tearing down
+    }
   }
 
   private updateBoatMovement(): void {
@@ -1056,6 +1156,7 @@ export class GameScene extends Phaser.Scene {
   private applyServerGameState(state: SerializableGameState): void {
     this.applyServerPlayersState(state);
     this.applyServerPratsState(state);
+    this.applyServerTownsState(state);
     this.applyServerOctopusState(state);
     this.applyServerStingrayState(state);
     this.applyServerProjectilesState(state);
@@ -1115,7 +1216,8 @@ export class GameScene extends Phaser.Scene {
       this.killsOctopus = me.killsOctopus ?? 0;
       this.killsStingray = me.killsStingray ?? 0;
       this.pratsCaptured = me.pratsCaptured ?? 0;
-      this.scoreText.setText(formatPratsHudLabel(this.pratsCaptured));
+      this.pratSalvos = me.pratSalvos ?? 0;
+      this.scoreText.setText(formatPratsHudLabel(this.pratsCaptured, this.pratSalvos));
       this.localIsGhost = me.isGhost ?? false;
       this.syncedGhostPratsCaptured = me.ghostPratsCaptured ?? 0;
 
@@ -1221,17 +1323,76 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  private applyServerTownsState(state: SerializableGameState): void {
+    try {
+      const townsRecord = state.towns ?? {};
+      const seenIds = new Set<string>();
+      for (const [id, town] of Object.entries(townsRecord)) {
+        seenIds.add(id);
+        this.upsertTownVisual(id, town);
+      }
+      for (const id of Array.from(this.townEntities.keys())) {
+        if (!seenIds.has(id)) {
+          const entity = this.townEntities.get(id);
+          entity?.text.destroy();
+          entity?.pulse?.destroy();
+          this.townEntities.delete(id);
+        }
+      }
+    } catch {
+      // Scene may be destroyed during apply
+    }
+  }
+
+  private upsertTownVisual(id: string, town: TownState): void {
+    const px = simulationToPhaserPixels(town.x);
+    const py = simulationToPhaserPixels(town.y);
+    let entity = this.townEntities.get(id);
+    const labelText = "T";
+    const isOwnedByMe = town.ownerId === this.multiplayer.getPlayerId();
+    const isNeutral = town.ownerId == null;
+    const color = isOwnedByMe ? "#0055ff" : isNeutral ? "#000000" : "#5500aa";
+
+    if (!entity) {
+      const text = this.add.text(px, py, labelText, {
+        fontSize: "46px",
+        fontStyle: "bold",
+        color,
+      });
+      text.setOrigin(0.5);
+      text.setDepth(9);
+      text.setShadow(0, 0, "#2f77ff", 10, true, true);
+
+      this.tweens.add({
+        targets: text,
+        alpha: 0.25,
+        duration: 500,
+        yoyo: true,
+        repeat: -1,
+        ease: "Sine.easeInOut",
+      });
+
+      entity = { id, text };
+      this.townEntities.set(id, entity);
+      return;
+    }
+
+    entity.text.setPosition(px, py);
+    entity.text.setStyle({ color });
+  }
+
   private applyServerProjectilesState(state: SerializableGameState): void {
     try {
       const seen = new Set<string>();
       for (const [id, projectile] of Object.entries(state.projectiles)) {
         const fromOctopus = projectile.shooterId.startsWith("octopus:");
+        const fromTown = projectile.shooterId.startsWith("town:");
         if (fromOctopus && !this.octopusesEnabled) {
           continue;
         }
         seen.add(id);
         let fontSize: string;
-        if (fromOctopus) {
+        if (fromOctopus || fromTown) {
           fontSize = "24px";
         } else {
           const shooterLevel = state.players?.[projectile.shooterId]?.level ?? 1;

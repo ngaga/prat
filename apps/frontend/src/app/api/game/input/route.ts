@@ -9,6 +9,7 @@ const allowedInputTypes: PlayerInputType[] = [
   "ROTATE",
   "PRAT_CAPTURE",
   "SYNC_PROFILE",
+  "TOWN_SEND_SALVO",
 ];
 
 interface InputBody {

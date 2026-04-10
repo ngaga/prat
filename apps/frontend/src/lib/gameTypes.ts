@@ -3,7 +3,13 @@
  * GameState uses plain objects for JSON serialization.
  */
 
-export type PlayerInputType = "MOVE" | "SHOOT" | "ROTATE" | "PRAT_CAPTURE" | "SYNC_PROFILE";
+export type PlayerInputType =
+  | "MOVE"
+  | "SHOOT"
+  | "ROTATE"
+  | "PRAT_CAPTURE"
+  | "SYNC_PROFILE"
+  | "TOWN_SEND_SALVO";
 
 export interface PlayerInput {
   type: PlayerInputType;
@@ -31,6 +37,7 @@ export interface PlayerInput {
   targetEnemyId?: string;
   rotation?: number;
   pratId?: string;
+  townId?: string;
 }
 
 export interface PlayerState {
@@ -46,6 +53,11 @@ export interface PlayerState {
   killsStingray?: number;
   /** Lifetime normal-mode prat captures (persisted via client upsert like kills). */
   pratsCaptured?: number;
+  /**
+   * Spendable town resource: each TOWN_SEND_SALVO consumes 1.
+   * Server keeps it authoritative; client only displays and requests.
+   */
+  pratSalvos?: number;
   color?: number;
   /** Dead players respawn as ghosts until they capture enough word prats. */
   isGhost?: boolean;
@@ -76,6 +88,17 @@ export interface PratState {
   color: string;
   isHeal: boolean;
   healAmount?: number;
+}
+
+export interface TownState {
+  id: string;
+  x: number;
+  y: number;
+  /** Null = neutral / unowned. */
+  ownerId: string | null;
+  /** How many salvos the current contender has landed since last owner change. */
+  contenderId: string | null;
+  contenderSalvos: number;
 }
 
 export interface ProjectileState {
@@ -130,6 +153,7 @@ export interface SerializableGameState {
   enemies: Record<string, EnemyState>;
   stingrays: Record<string, StingrayState>;
   prats: Record<string, PratState>;
+  towns: Record<string, TownState>;
   projectiles: Record<string, ProjectileState>;
   /** You were damaged or healed; same broadcast rules as projectileHitDealtEvents. */
   projectileHitReceivedEvents: ProjectileHitReceivedEvent[];

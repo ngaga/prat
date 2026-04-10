@@ -44,6 +44,7 @@ import type {
   ProjectileState,
   SerializableGameState,
   StingrayState,
+  TownState,
 } from "@/lib/gameTypes";
 
 /** Server tick rate: 20 FPS (must match SSE stream interval so getState runs one tick before draining events) */
@@ -78,6 +79,9 @@ const PRAT_STYLE_ROLLS: { fontStyle: string; power: number }[] = [
 const SALVO_LETTER_DELAY_MS = 80;
 const SHOOT_START_TOLERANCE = 120;
 const SHOOT_TIMESTAMP_SLACK_MS = 15_000;
+const TOWN_COUNT = 6;
+const TOWN_CAPTURE_SALVOS_REQUIRED = 10;
+const TOWN_SHOOT_INTERVAL_MS = Math.floor(OCTOPUS_SHOOT_INTERVAL_MS / 2);
 
 function distance(ax: number, ay: number, bx: number, by: number): number {
   const dx = ax - bx;
@@ -133,6 +137,16 @@ interface ServerProjectile {
   maxRange: number;
 }
 
+interface ServerTown {
+  id: string;
+  x: number;
+  y: number;
+  ownerId: string | null;
+  contenderId: string | null;
+  contenderSalvos: number;
+  lastShotTime: number;
+}
+
 function octopusProjectileShooterId(octopusEnemyId: string): string {
   return `octopus:${octopusEnemyId}`;
 }
@@ -148,11 +162,13 @@ export class GameRoom {
   private enemies = new Map<string, EnemyState>();
   private stingrays = new Map<string, StingrayState>();
   private prats = new Map<string, PratState>();
+  private towns = new Map<string, ServerTown>();
   private projectiles = new Map<string, ServerProjectile>();
   private nextEnemyId = 0;
   private nextStingrayId = 0;
   private nextProjectileId = 0;
   private nextPratId = 0;
+  private nextTownId = 0;
   private lastOctopusSpawnCheckTime = 0;
   private lastStingraySpawnTime = 0;
   private lastPratSpawnTime = 0;
@@ -178,6 +194,7 @@ export class GameRoom {
     this.lastStingraySpawnTime = now;
     this.lastPratSpawnTime = now;
     this.spawnInitialPrats();
+    this.spawnInitialTowns();
     this.lastSimulationTime = Date.now() - GAME_LOOP_INTERVAL_MS;
   }
 
@@ -204,6 +221,7 @@ export class GameRoom {
       killsOctopus: 0,
       killsStingray: 0,
       pratsCaptured: 0,
+      pratSalvos: 0,
       color: playerIdToColor(playerId),
       isGhost: false,
       ghostPratsCaptured: 0,
@@ -214,6 +232,23 @@ export class GameRoom {
     for (let index = 0; index < 40; index++) {
       const { x, y } = randomInWorld();
       this.spawnPratAt(x, y);
+    }
+  }
+
+  private spawnInitialTowns(): void {
+    const now = Date.now();
+    for (let index = 0; index < TOWN_COUNT; index++) {
+      const { x, y } = randomInWorld();
+      const id = `town-${this.nextTownId++}`;
+      this.towns.set(id, {
+        id,
+        x: clampWorld(x),
+        y: clampWorld(y),
+        ownerId: null,
+        contenderId: null,
+        contenderSalvos: 0,
+        lastShotTime: now,
+      });
     }
   }
 
@@ -372,6 +407,10 @@ export class GameRoom {
       this.tryPratCapture(playerId, input);
       return {};
     }
+    if (input.type === "TOWN_SEND_SALVO") {
+      this.tryTownSendSalvo(playerId, input);
+      return {};
+    }
     if (input.type === "SHOOT") {
       const shooter = this.players.get(playerId);
       if (!shooter?.isGhost) {
@@ -434,11 +473,71 @@ export class GameRoom {
     }
     if (!prat.isHeal) {
       playerState.pratsCaptured = (playerState.pratsCaptured ?? 0) + 1;
+      playerState.pratSalvos = (playerState.pratSalvos ?? 0) + 1;
     }
     playerState.x = captureX;
     playerState.y = captureY;
     this.prats.delete(pratId);
     this.players.set(playerId, playerState);
+  }
+
+  private tryTownSendSalvo(playerId: string, input: PlayerInput): void {
+    const townId = typeof input.townId === "string" ? input.townId : "";
+    if (!townId) return;
+    const playerState = this.players.get(playerId);
+    const town = this.towns.get(townId);
+    if (!playerState || !town) return;
+    if (playerState.isGhost) return;
+
+    const available = playerState.pratSalvos ?? 0;
+    if (available <= 0) return;
+
+    playerState.pratSalvos = available - 1;
+    this.players.set(playerId, playerState);
+
+    if (town.ownerId === playerId) {
+      return;
+    }
+
+    if (town.contenderId !== playerId) {
+      town.contenderId = playerId;
+      town.contenderSalvos = 0;
+    }
+    town.contenderSalvos += 1;
+    if (town.contenderSalvos >= TOWN_CAPTURE_SALVOS_REQUIRED) {
+      town.ownerId = playerId;
+      town.contenderId = null;
+      town.contenderSalvos = 0;
+    }
+    this.towns.set(townId, town);
+  }
+
+  private spawnTownShotAtPlayer(town: ServerTown, targetPlayer: PlayerState, now: number): void {
+    const startX = town.x;
+    const startY = town.y;
+    let directionX = targetPlayer.x - startX;
+    let directionY = targetPlayer.y - startY;
+    const length = Math.sqrt(directionX * directionX + directionY * directionY);
+    if (length < 1) return;
+    directionX /= length;
+    directionY /= length;
+
+    const id = `proj-${this.nextProjectileId++}`;
+    this.projectiles.set(id, {
+      id,
+      shooterId: `town:${town.id}`,
+      originX: startX,
+      originY: startY,
+      x: startX,
+      y: startY,
+      directionX,
+      directionY,
+      speed: LETTER_SPEED_SIMULATION_UNITS_PER_SECOND * OCTOPUS_PROJECTILE_SPEED_FACTOR,
+      damage: OCTOPUS_PROJECTILE_DAMAGE,
+      letter: "T",
+      salvoReleaseTime: now,
+      maxRange: OCTOPUS_PROJECTILE_MAX_RANGE,
+    });
   }
 
   private spawnOctopusSalvo(enemy: EnemyState, target: PlayerState, now: number): void {
@@ -525,6 +624,7 @@ export class GameRoom {
     this.updateEnemiesAndSpawns(now);
     this.updateStingrays(now);
     this.spawnPratsNearPlayers(now);
+    this.updateTowns(now);
     this.updateProjectiles(now);
     if (this.players.size === 0 && this.emptySince === null) {
       this.emptySince = now;
@@ -535,6 +635,29 @@ export class GameRoom {
     this.pendingProjectileHitDealt.length = 0;
     this.eliminationEventsForBroadcast.push(...this.pendingEliminations);
     this.pendingEliminations.length = 0;
+  }
+
+  private updateTowns(now: number): void {
+    for (const town of this.towns.values()) {
+      if (!town.ownerId) continue;
+      if (now - town.lastShotTime < TOWN_SHOOT_INTERVAL_MS) continue;
+
+      let bestTarget: PlayerState | null = null;
+      let bestDist = Infinity;
+      for (const [playerId, player] of this.players) {
+        if (playerId === town.ownerId) continue;
+        if (player.isGhost) continue;
+        const d = distance(town.x, town.y, player.x, player.y);
+        if (d < bestDist) {
+          bestDist = d;
+          bestTarget = player;
+        }
+      }
+      if (!bestTarget) continue;
+      if (bestDist > OCTOPUS_PROJECTILE_MAX_RANGE) continue;
+      town.lastShotTime = now;
+      this.spawnTownShotAtPlayer(town, bestTarget, now);
+    }
   }
 
   private updateEnemiesAndSpawns(now: number): void {
@@ -837,6 +960,17 @@ export class GameRoom {
     for (const [id, prat] of this.prats) {
       pratsRecord[id] = { ...prat };
     }
+    const townsRecord: Record<string, TownState> = {};
+    for (const [id, town] of this.towns) {
+      townsRecord[id] = {
+        id: town.id,
+        x: town.x,
+        y: town.y,
+        ownerId: town.ownerId,
+        contenderId: town.contenderId,
+        contenderSalvos: town.contenderSalvos,
+      };
+    }
 
     return {
       timestamp: Date.now(),
@@ -845,6 +979,7 @@ export class GameRoom {
       enemies: enemiesRecord,
       stingrays: stingraysRecord,
       prats: pratsRecord,
+      towns: townsRecord,
       projectiles: projectilesRecord,
       projectileHitReceivedEvents,
       projectileHitDealtEvents,

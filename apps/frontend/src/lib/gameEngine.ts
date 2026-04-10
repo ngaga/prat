@@ -522,22 +522,27 @@ export class GameRoom {
     directionX /= length;
     directionY /= length;
 
-    const id = `proj-${this.nextProjectileId++}`;
-    this.projectiles.set(id, {
-      id,
-      shooterId: `town:${town.id}`,
-      originX: startX,
-      originY: startY,
-      x: startX,
-      y: startY,
-      directionX,
-      directionY,
-      speed: LETTER_SPEED_SIMULATION_UNITS_PER_SECOND * OCTOPUS_PROJECTILE_SPEED_FACTOR,
-      damage: OCTOPUS_PROJECTILE_DAMAGE,
-      letter: "T",
-      salvoReleaseTime: now,
-      maxRange: OCTOPUS_PROJECTILE_MAX_RANGE,
-    });
+    const shooterId = `town:${town.id}`;
+    const speed = LETTER_SPEED_SIMULATION_UNITS_PER_SECOND * OCTOPUS_PROJECTILE_SPEED_FACTOR;
+
+    for (let letterIndex = 0; letterIndex < PRAT_LETTERS.length; letterIndex++) {
+      const id = `proj-${this.nextProjectileId++}`;
+      this.projectiles.set(id, {
+        id,
+        shooterId,
+        originX: startX,
+        originY: startY,
+        x: startX,
+        y: startY,
+        directionX,
+        directionY,
+        speed,
+        damage: OCTOPUS_PROJECTILE_DAMAGE,
+        letter: PRAT_LETTERS[letterIndex],
+        salvoReleaseTime: now + letterIndex * SALVO_LETTER_DELAY_MS,
+        maxRange: OCTOPUS_PROJECTILE_MAX_RANGE,
+      });
+    }
   }
 
   private spawnOctopusSalvo(enemy: EnemyState, target: PlayerState, now: number): void {
@@ -962,11 +967,18 @@ export class GameRoom {
     }
     const townsRecord: Record<string, TownState> = {};
     for (const [id, town] of this.towns) {
+      let ownerName: string | undefined;
+      if (town.ownerId != null) {
+        const ownerState = this.players.get(town.ownerId);
+        const trimmed = ownerState?.name?.trim();
+        ownerName = trimmed && trimmed.length > 0 ? trimmed : town.ownerId.slice(0, 8);
+      }
       townsRecord[id] = {
         id: town.id,
         x: town.x,
         y: town.y,
         ownerId: town.ownerId,
+        ownerName,
         contenderId: town.contenderId,
         contenderSalvos: town.contenderSalvos,
       };

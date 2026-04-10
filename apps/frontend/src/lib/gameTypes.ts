@@ -96,6 +96,8 @@ export interface TownState {
   y: number;
   /** Null = neutral / unowned. */
   ownerId: string | null;
+  /** Display name of the owner; empty when neutral. Authoritative from server. */
+  ownerName?: string;
   /** How many salvos the current contender has landed since last owner change. */
   contenderId: string | null;
   contenderSalvos: number;

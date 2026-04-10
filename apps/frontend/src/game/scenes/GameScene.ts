@@ -31,6 +31,7 @@ interface PratEntity {
 interface TownEntity {
   id: string;
   text: Phaser.GameObjects.Text;
+  nameLabel: Phaser.GameObjects.Text;
   pulse?: Phaser.GameObjects.Arc;
 }
 
@@ -80,6 +81,15 @@ const REVIVE_PRAT_SCALE_IN_MS = DEATH_PRAT_SCALE_IN_MS;
 const REVIVE_PRAT_FADE_OUT_MS = 500;
 const REVIVE_PRAT_LABEL_TEXT = "PRAT!";
 const DEATH_PRAT_OVERLAY_DEPTH = 100000;
+/** Town letter blink: 0.5 Hz full cycle => 1000 ms per half (bright/dim). */
+const TOWN_OWNED_BLINK_HALF_PERIOD_MS = 1000;
+const TOWN_OWNER_NAME_OFFSET_ABOVE_LETTER_PX = 36;
+/** Soft pink for local-owned town letter (avoids harsh blue at night). */
+const TOWN_LETTER_COLOR_LOCAL = "#c989a8";
+const TOWN_GLOW_COLOR_LOCAL = "#f5c6dc";
+/** Muted plum / lavender for other players' towns. */
+const TOWN_LETTER_COLOR_OTHER_OWNER = "#8b6b8f";
+const TOWN_GLOW_COLOR_OTHER_OWNER = "#e0c4e8";
 
 type PratTransitionOverlayOptions = {
   labelText: string;
@@ -168,6 +178,8 @@ export class GameScene extends Phaser.Scene {
   private pratEntities = new Map<string, PratEntity>();
   private pratCaptureRequestSent = new Set<string>();
   private townEntities = new Map<string, TownEntity>();
+  /** Tracks town ownership across SSE frames so we can toast on local capture. */
+  private townPreviousOwnerById = new Map<string, string | null>();
   private hoveredTownId: string | null = null;
   private score: number = 0;
   private scoreText!: Phaser.GameObjects.Text;
@@ -588,9 +600,11 @@ export class GameScene extends Phaser.Scene {
     this.pratCaptureRequestSent.clear();
     for (const entity of this.townEntities.values()) {
       entity.text.destroy();
+      entity.nameLabel.destroy();
       entity.pulse?.destroy();
     }
     this.townEntities.clear();
+    this.townPreviousOwnerById.clear();
     for (const octopus of this.octopuses.values()) {
       octopus.sprite.destroy();
       octopus.lifeBar.destroy();
@@ -994,7 +1008,10 @@ export class GameScene extends Phaser.Scene {
       this.spawnEphemeralHudMessage("Not enough salvos.");
       return;
     }
-    this.recordSessionAction();
+    const entity = this.townEntities.get(townId);
+    if (!entity) return;
+    // Same PRAT letter salvo as normal shooting (authoritative projectiles on server).
+    this.fireLettersAtPosition(entity.text.x, entity.text.y);
     void this.multiplayer.sendGameInput({
       type: "TOWN_SEND_SALVO",
       timestamp: Date.now(),
@@ -1009,7 +1026,7 @@ export class GameScene extends Phaser.Scene {
     if (!entity) return;
     try {
       entity.pulse?.destroy();
-      const pulse = this.add.circle(entity.text.x, entity.text.y, 46, 0x2f77ff, 0.25);
+      const pulse = this.add.circle(entity.text.x, entity.text.y, 46, 0xf5c6dc, 0.28);
       pulse.setDepth(8);
       entity.pulse = pulse;
       this.tweens.add({
@@ -1327,16 +1344,28 @@ export class GameScene extends Phaser.Scene {
     try {
       const townsRecord = state.towns ?? {};
       const seenIds = new Set<string>();
+      const localPlayerId = this.multiplayer.getPlayerId();
       for (const [id, town] of Object.entries(townsRecord)) {
         seenIds.add(id);
+        const previousOwnerId = this.townPreviousOwnerById.get(id);
+        if (
+          previousOwnerId !== undefined &&
+          town.ownerId === localPlayerId &&
+          previousOwnerId !== town.ownerId
+        ) {
+          this.spawnTownCapturedToast();
+        }
+        this.townPreviousOwnerById.set(id, town.ownerId);
         this.upsertTownVisual(id, town);
       }
       for (const id of Array.from(this.townEntities.keys())) {
         if (!seenIds.has(id)) {
           const entity = this.townEntities.get(id);
           entity?.text.destroy();
+          entity?.nameLabel.destroy();
           entity?.pulse?.destroy();
           this.townEntities.delete(id);
+          this.townPreviousOwnerById.delete(id);
         }
       }
     } catch {
@@ -1344,41 +1373,123 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  private formatTownOwnerDisplayName(town: TownState): string {
+    if (town.ownerId == null) return "";
+    const raw = town.ownerName?.trim() ?? "";
+    if (raw.length > 0 && raw.length <= MAX_PLAYER_NAME_LENGTH) return raw;
+    if (raw.length > MAX_PLAYER_NAME_LENGTH) return raw.slice(0, MAX_PLAYER_NAME_LENGTH);
+    return shortId(town.ownerId);
+  }
+
   private upsertTownVisual(id: string, town: TownState): void {
     const px = simulationToPhaserPixels(town.x);
     const py = simulationToPhaserPixels(town.y);
     let entity = this.townEntities.get(id);
     const labelText = "T";
-    const isOwnedByMe = town.ownerId === this.multiplayer.getPlayerId();
+    const localPlayerId = this.multiplayer.getPlayerId();
+    const isOwnedByMe = town.ownerId === localPlayerId;
     const isNeutral = town.ownerId == null;
-    const color = isOwnedByMe ? "#0055ff" : isNeutral ? "#000000" : "#5500aa";
+    const color = isOwnedByMe ? TOWN_LETTER_COLOR_LOCAL : isNeutral ? "#000000" : TOWN_LETTER_COLOR_OTHER_OWNER;
+    const glowColor = isOwnedByMe ? TOWN_GLOW_COLOR_LOCAL : TOWN_GLOW_COLOR_OTHER_OWNER;
+    const ownerDisplayName = this.formatTownOwnerDisplayName(town);
+    const nameLabelY = py - TOWN_OWNER_NAME_OFFSET_ABOVE_LETTER_PX;
 
     if (!entity) {
       const text = this.add.text(px, py, labelText, {
         fontSize: "46px",
         fontStyle: "bold",
-        color,
+        color: "#000000",
       });
       text.setOrigin(0.5);
       text.setDepth(9);
-      text.setShadow(0, 0, "#2f77ff", 10, true, true);
+      text.setAlpha(1);
 
-      this.tweens.add({
-        targets: text,
-        alpha: 0.25,
-        duration: 500,
-        yoyo: true,
-        repeat: -1,
-        ease: "Sine.easeInOut",
+      const nameLabel = this.add.text(px, nameLabelY, ownerDisplayName, {
+        fontSize: "14px",
+        fontStyle: "bold",
+        color: "#000000",
       });
+      nameLabel.setOrigin(0.5, 1);
+      nameLabel.setDepth(10);
 
-      entity = { id, text };
+      entity = { id, text, nameLabel };
       this.townEntities.set(id, entity);
+      this.applyTownVisualState(entity, px, py, color, glowColor, isNeutral, ownerDisplayName, nameLabelY);
       return;
     }
 
     entity.text.setPosition(px, py);
-    entity.text.setStyle({ color });
+    entity.nameLabel.setPosition(px, nameLabelY);
+    this.applyTownVisualState(entity, px, py, color, glowColor, isNeutral, ownerDisplayName, nameLabelY);
+  }
+
+  private applyTownVisualState(
+    entity: TownEntity,
+    px: number,
+    py: number,
+    letterColor: string,
+    glowColor: string,
+    isNeutral: boolean,
+    ownerDisplayName: string,
+    nameLabelY: number
+  ): void {
+    this.tweens.killTweensOf(entity.text);
+    entity.text.setPosition(px, py);
+    entity.nameLabel.setPosition(px, nameLabelY);
+
+    if (isNeutral) {
+      entity.text.setAlpha(1);
+      entity.text.setStyle({ fontSize: "46px", fontStyle: "bold", color: "#000000" });
+      entity.text.setShadow(0, 0, "#000000", 0, false, false);
+      entity.nameLabel.setText("");
+      entity.nameLabel.setVisible(false);
+      return;
+    }
+
+    entity.text.setStyle({ fontSize: "46px", fontStyle: "bold", color: letterColor });
+    entity.text.setShadow(0, 0, glowColor, 10, true, true);
+    entity.text.setAlpha(1);
+    this.tweens.add({
+      targets: entity.text,
+      alpha: 0.25,
+      duration: TOWN_OWNED_BLINK_HALF_PERIOD_MS,
+      yoyo: true,
+      repeat: -1,
+      ease: "Sine.easeInOut",
+    });
+
+    entity.nameLabel.setText(ownerDisplayName);
+    entity.nameLabel.setVisible(true);
+    entity.nameLabel.setStyle({ fontSize: "14px", fontStyle: "bold", color: "#000000" });
+  }
+
+  /** Toast when the local player captures a town (gold style like ghost prat feedback). */
+  private spawnTownCapturedToast(): void {
+    if (!this.isSceneActive) return;
+    try {
+      const label = this.add
+        .text(this.scale.width / 2, this.scale.height * 0.22, "Captured", {
+          fontFamily: "Arial",
+          fontSize: "28px",
+          fontStyle: "bold",
+          color: "#ffd700",
+          stroke: "#000000",
+          strokeThickness: 4,
+        })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setDepth(1200);
+      this.tweens.add({
+        targets: label,
+        y: label.y - 48,
+        alpha: 0,
+        duration: 1800,
+        ease: "Sine.easeInOut",
+        onComplete: () => label.destroy(),
+      });
+    } catch {
+      // Scene tearing down
+    }
   }
 
   private applyServerProjectilesState(state: SerializableGameState): void {

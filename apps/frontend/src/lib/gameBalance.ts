@@ -19,6 +19,11 @@ export const MAX_PRATS = 80;
 export const HEAL_LETTER_PROBABILITY = 0.1;
 export const HEAL_PERCENT_OF_MAX = 0.1;
 
+/** Number of town capture points on the map (server spawn count; client uses live `towns` size for display). */
+export const TOWN_COUNT = 6;
+/** Salvos needed to capture a town from another owner (authoritative server). */
+export const TOWN_CAPTURE_SALVOS_REQUIRED = 10;
+
 /** Damage per letter from octopus salvos (authoritative server). */
 export const OCTOPUS_PROJECTILE_DAMAGE = 4;
 /** Octopus letter speed as a fraction of player letter speed. */

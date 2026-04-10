@@ -110,7 +110,7 @@ Optional: `FRONTEND_ORIGIN` = comma-separated list of allowed origins (e.g. `htt
 | Setting | Value |
 |---------|--------|
 | Build | `corepack enable && pnpm install && pnpm run build` |
-| Start | `pnpm run start` |
+| Start | `npm run start` (see `render.yaml`; same reason as API) |
 
 **Environment (frontend)**
 

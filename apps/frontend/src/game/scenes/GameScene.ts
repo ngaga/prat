@@ -189,6 +189,9 @@ export class GameScene extends Phaser.Scene {
   private isSceneActive = true;
   private lifeBar!: Phaser.GameObjects.Graphics;
   private experienceBar!: Phaser.GameObjects.Graphics;
+  private conquestBar!: Phaser.GameObjects.Graphics;
+  /** Fraction of towns owned by the local player (0..1), from last authoritative towns sync. */
+  private cityConquestRatio = 0;
   private sea!: Phaser.GameObjects.TileSprite;
   private borderTop!: Phaser.GameObjects.TileSprite;
   private borderBottom!: Phaser.GameObjects.TileSprite;
@@ -464,14 +467,22 @@ export class GameScene extends Phaser.Scene {
     const barWidth = 200;
     const barHeight = 14;
     const labelX = 20;
+    const conquestY = this.scale.height - 75;
     const lifeY = this.scale.height - 55;
     const experienceY = this.scale.height - 35;
+
+    this.conquestBar = this.add.graphics().setScrollFactor(0);
+    this.drawBar(this.conquestBar, BAR_X, conquestY, barWidth, barHeight, 0x333333, 0x00ff00, 0);
 
     this.lifeBar = this.add.graphics().setScrollFactor(0);
 
     this.experienceBar = this.add.graphics().setScrollFactor(0);
     this.drawBar(this.experienceBar, BAR_X, experienceY, barWidth, barHeight, 0x333333, 0x9b59b6, 0);
 
+    this.add
+      .text(labelX, conquestY + barHeight / 2, "Conquest", { fontSize: "12px", color: "#000" })
+      .setOrigin(0, 0.5)
+      .setScrollFactor(0);
     this.add
       .text(labelX, lifeY + barHeight / 2, "PV", { fontSize: "12px", color: "#000" })
       .setOrigin(0, 0.5)
@@ -480,6 +491,11 @@ export class GameScene extends Phaser.Scene {
       .text(labelX, experienceY + barHeight / 2, "Exp.", { fontSize: "12px", color: "#000" })
       .setOrigin(0, 0.5)
       .setScrollFactor(0);
+    this.add
+      .text(BAR_X + barWidth + 10, conquestY + barHeight / 2, "0%", { fontSize: "12px", color: "#000" })
+      .setOrigin(0, 0.5)
+      .setScrollFactor(0)
+      .setName("conquest-percent-text");
     this.add
       .text(BAR_X + barWidth + 10, experienceY + barHeight / 2, `Niv. ${this.level}`, { fontSize: "12px", color: "#000" })
       .setOrigin(0, 0.5)
@@ -1110,7 +1126,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   update(): void {
-    if (!this.boat || !this.boatNameLabel || !this.lifeBar || !this.experienceBar) return;
+    if (!this.boat || !this.boatNameLabel || !this.lifeBar || !this.experienceBar || !this.conquestBar) return;
     const localNameFontPx = boatNameFontSizePxForScale(this.boat.scaleX);
     this.boatNameLabel.setStyle({ fontSize: `${localNameFontPx}px` });
     this.boatNameLabel.setPosition(
@@ -1123,8 +1139,24 @@ export class GameScene extends Phaser.Scene {
 
     const barWidth = 200;
     const barHeight = 14;
+    const conquestY = this.scale.height - 75;
     const lifeY = this.scale.height - 55;
     const experienceY = this.scale.height - 35;
+    this.drawBar(
+      this.conquestBar,
+      BAR_X,
+      conquestY,
+      barWidth,
+      barHeight,
+      0x333333,
+      0x00ff00,
+      this.cityConquestRatio
+    );
+    const conquestPercentText = this.children.getByName("conquest-percent-text") as Phaser.GameObjects.Text;
+    if (conquestPercentText) {
+      conquestPercentText.setText(`${Math.round(this.cityConquestRatio * 100)}%`);
+      conquestPercentText.setPosition(BAR_X + barWidth + 10, conquestY + barHeight / 2);
+    }
     this.drawBar(this.lifeBar, BAR_X, lifeY, barWidth, barHeight, 0x333333, 0x00ff00, this.life / MAX_LIFE);
     const { current: experienceInCurrentLevel, needed: experienceNeededForNextLevel } =
       getExperienceProgressTowardNextLevel(this.experience);
@@ -1368,6 +1400,11 @@ export class GameScene extends Phaser.Scene {
           this.townPreviousOwnerById.delete(id);
         }
       }
+
+      const townList = Object.values(townsRecord);
+      const totalTowns = townList.length;
+      const ownedByLocal = townList.filter((t) => t.ownerId === localPlayerId).length;
+      this.cityConquestRatio = totalTowns > 0 ? ownedByLocal / totalTowns : 0;
     } catch {
       // Scene may be destroyed during apply
     }

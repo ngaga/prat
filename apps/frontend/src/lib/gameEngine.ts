@@ -12,6 +12,8 @@ import {
   PRAT_CAPTURE_RADIUS,
   PRAT_SPAWN_INTERVAL_MS,
   PRAT_SPAWN_RADIUS,
+  TOWN_CAPTURE_SALVOS_REQUIRED,
+  TOWN_COUNT,
   XP_PER_OCTOPUS_OR_STINGRAY,
   XP_PER_PLAYER_KILL_PER_VICTIM_LEVEL,
   XP_PER_PRAT,
@@ -79,8 +81,6 @@ const PRAT_STYLE_ROLLS: { fontStyle: string; power: number }[] = [
 const SALVO_LETTER_DELAY_MS = 80;
 const SHOOT_START_TOLERANCE = 120;
 const SHOOT_TIMESTAMP_SLACK_MS = 15_000;
-const TOWN_COUNT = 6;
-const TOWN_CAPTURE_SALVOS_REQUIRED = 10;
 const TOWN_SHOOT_INTERVAL_MS = Math.floor(OCTOPUS_SHOOT_INTERVAL_MS / 2);
 
 function distance(ax: number, ay: number, bx: number, by: number): number {

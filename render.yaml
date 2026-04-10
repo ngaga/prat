@@ -10,8 +10,8 @@ services:
     plan: free
     region: frankfurt
     buildCommand: corepack enable && pnpm install && pnpm run build:backend
-    # Avoid pnpm at runtime: Corepack may try to download pnpm from npm (can time out on Render).
-    startCommand: cd apps/backend && node dist/main
+    # Runtime: use npm (bundled with Node), not pnpm — invoking pnpm triggers Corepack/npm network.
+    startCommand: npm run start:backend
     healthCheckPath: /api/feature-flags/octopuses
     envVars:
       - key: NODE_VERSION
@@ -32,8 +32,8 @@ services:
     plan: free
     region: frankfurt
     buildCommand: corepack enable && pnpm install && pnpm run build
-    # Avoid pnpm at runtime: Corepack may try to download pnpm from npm (can time out on Render).
-    startCommand: node apps/frontend/node_modules/next/dist/bin/next start apps/frontend -H 0.0.0.0 -p $PORT
+    # Runtime: npm run start avoids pnpm/Corepack. If the dashboard Start Command overrides this, set it to the same.
+    startCommand: npm run start
     envVars:
       - key: NODE_VERSION
         value: "20"

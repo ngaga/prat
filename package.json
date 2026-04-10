@@ -7,8 +7,8 @@
     "dev:backend": "pnpm --filter backend start:dev",
     "build": "pnpm --filter frontend build",
     "build:backend": "pnpm --filter backend build",
-    "start": "pnpm --filter frontend start",
-    "start:backend": "pnpm --filter backend run start:prod",
+    "start": "node apps/frontend/node_modules/next/dist/bin/next start apps/frontend -H 0.0.0.0 -p ${PORT:-10000}",
+    "start:backend": "cd apps/backend && node dist/main",
     "lint": "pnpm --filter frontend lint"
   },
   "devDependencies": {

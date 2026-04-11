@@ -1,5 +1,19 @@
 import { getBackendBaseUrl } from "@/lib/backendBaseUrl";
 
+/** Parse JSON only when the body is non-empty (Nest may send an empty body for `return null`). */
+async function parseResponseJsonOrNull<T>(response: Response): Promise<T | null> {
+  const text = await response.text();
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return null;
+  }
+  try {
+    return JSON.parse(trimmed) as T;
+  } catch {
+    return null;
+  }
+}
+
 export interface Player {
   id: string;
   name: string;
@@ -19,8 +33,10 @@ export async function getPlayerByName(name: string): Promise<Player | null> {
       return null;
     }
     const response = await fetch(`${base}/api/players/${encodeURIComponent(name.trim())}`);
-    const data = (await response.json()) as Player | null;
-    return data;
+    if (!response.ok) {
+      return null;
+    }
+    return await parseResponseJsonOrNull<Player>(response);
   } catch (error) {
     console.error("getPlayerByName error:", error);
     return null;
@@ -56,8 +72,11 @@ export async function upsertPlayer(player: {
         ghost_prats_captured: player.ghost_prats_captured ?? 0,
       }),
     });
-    const result = (await response.json()) as { success: boolean; error?: string };
-    return result.success;
+    const result = await parseResponseJsonOrNull<{ success: boolean; error?: string }>(response);
+    if (!result) {
+      return false;
+    }
+    return result.success === true;
   } catch (error) {
     console.error("upsertPlayer error:", error);
     return false;

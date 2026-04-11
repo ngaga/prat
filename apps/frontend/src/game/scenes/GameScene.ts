@@ -39,6 +39,11 @@ interface RemoteBoatData {
   sprite: Phaser.GameObjects.Image;
   nameLabel: Phaser.GameObjects.Text;
   lifeBar?: Phaser.GameObjects.Graphics;
+  /** Server snapshot target; sprite is smoothed toward this each frame. */
+  authoritativeWorldX: number;
+  authoritativeWorldY: number;
+  authoritativeRotation: number;
+  lastRemotePlayerPayload: RemotePlayer;
 }
 
 interface OctopusEntity {
@@ -230,6 +235,8 @@ export class GameScene extends Phaser.Scene {
    * server random spawn.
    */
   private localBoatPositionSyncedFromAuthoritativeState = false;
+  /** Camera follow starts after the first authoritative boat position (avoids framing 0,0). */
+  private cameraFollowsLocalBoat = false;
   private localIsGhost = false;
   /** Mirrors server ghost prat count; used for Supabase persistence like experience. */
   private syncedGhostPratsCaptured = 0;
@@ -350,6 +357,7 @@ export class GameScene extends Phaser.Scene {
         : undefined;
 
     this.boat = this.physics.add.sprite(0, 0, "boat");
+    this.boat.setAlpha(0);
     this.boat.setCollideWorldBounds(true);
     this.refreshLocalBoatDisplayScale();
     this.boat.rotation = Math.PI;
@@ -368,8 +376,8 @@ export class GameScene extends Phaser.Scene {
         color: "#000",
       })
       .setOrigin(0.5);
+    this.boatNameLabel.setAlpha(0);
 
-    this.cameras.main.startFollow(this.boat, true, 0.1, 0.1);
     this.cameras.main.setBounds(-WORLD_SIZE, -WORLD_SIZE, WORLD_SIZE * 2, WORLD_SIZE * 2);
     this.updateCameraZoom();
     this.scale.on("resize", this.updateCameraZoom, this);
@@ -829,6 +837,54 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  private layoutRemoteBoatHud(boatData: RemoteBoatData, data: RemotePlayer): void {
+    const remoteScale = boatDisplayScaleForLevel(data.level ?? 1);
+    boatData.sprite.setScale(remoteScale);
+    const displayName =
+      data.name && data.name.length <= MAX_PLAYER_NAME_LENGTH ? data.name : shortId(data.id);
+    boatData.nameLabel.setText(displayName);
+    boatData.nameLabel.setStyle({ fontSize: `${boatNameFontSizePxForScale(remoteScale)}px` });
+    const labelOffset = nameLabelOffsetAboveBoatForScale(remoteScale);
+    const displayedX = boatData.sprite.x;
+    const displayedY = boatData.sprite.y;
+    boatData.nameLabel.setPosition(displayedX, displayedY - labelOffset);
+    const lifeRatio = (data.life ?? MAX_LIFE) / MAX_LIFE;
+    boatData.lifeBar?.clear();
+    if (boatData.lifeBar) {
+      const remoteLifeBarTopY = displayedY - labelOffset - REMOTE_LIFE_BAR_OFFSET_ABOVE_NAME_CENTER;
+      this.drawBar(boatData.lifeBar, displayedX - 25, remoteLifeBarTopY, 50, 6, 0x333333, 0xff0000, lifeRatio);
+    }
+  }
+
+  /**
+   * Remote boats would otherwise jump every SSE tick; ease sprites toward the last authoritative snapshot.
+   */
+  private smoothRemoteBoatSpritesTowardAuthoritativeState(): void {
+    if (!this.isSceneActive || this.remoteBoats.size === 0) return;
+    try {
+      if (this.scene == null || !this.scene.isActive()) return;
+    } catch {
+      return;
+    }
+    const deltaSeconds = this.game.loop.delta / 1000;
+    const positionSmoothingRate = 14;
+    const rotationSmoothingRate = 16;
+    const positionBlend = 1 - Math.exp(-positionSmoothingRate * deltaSeconds);
+    const rotationBlend = 1 - Math.exp(-rotationSmoothingRate * deltaSeconds);
+    for (const [, boatData] of this.remoteBoats) {
+      const sprite = boatData.sprite;
+      const targetX = boatData.authoritativeWorldX;
+      const targetY = boatData.authoritativeWorldY;
+      const targetRotation = boatData.authoritativeRotation;
+      sprite.x += (targetX - sprite.x) * positionBlend;
+      sprite.y += (targetY - sprite.y) * positionBlend;
+      const currentRotation = sprite.rotation;
+      const rotationDelta = Phaser.Math.Angle.Wrap(targetRotation - currentRotation);
+      sprite.rotation = currentRotation + rotationDelta * rotationBlend;
+      this.layoutRemoteBoatHud(boatData, boatData.lastRemotePlayerPayload);
+    }
+  }
+
   private updateMultiplayerStatus(): void {
     const statusText = this.children.getByName("multiplayer-status") as Phaser.GameObjects.Text;
     if (statusText) {
@@ -849,13 +905,16 @@ export class GameScene extends Phaser.Scene {
     try {
       for (const [playerId, data] of players) {
         if (data.x == null || data.y == null) continue;
+        const remotePayload: RemotePlayer = { ...data, id: playerId };
+        const targetRotation = data.rotation ?? 0;
         let boatData = this.remoteBoats.get(playerId);
         if (!boatData) {
           if (!this.textures.exists("boat")) return;
           const sprite = this.add.image(data.x, data.y, "boat");
           sprite.setDepth(5);
           sprite.setInteractive({ useHandCursor: true });
-          const displayName = data.name && data.name.length <= MAX_PLAYER_NAME_LENGTH ? data.name : shortId(playerId);
+          const displayName =
+            data.name && data.name.length <= MAX_PLAYER_NAME_LENGTH ? data.name : shortId(playerId);
           const nameLabel = this.add
             .text(data.x, data.y - 50, displayName, {
               fontSize: "12px",
@@ -864,25 +923,25 @@ export class GameScene extends Phaser.Scene {
             .setOrigin(0.5)
             .setDepth(6);
           const lifeBar = this.add.graphics().setDepth(7);
-          this.remoteBoats.set(playerId, { sprite, nameLabel, lifeBar });
-          boatData = { sprite, nameLabel, lifeBar };
+          boatData = {
+            sprite,
+            nameLabel,
+            lifeBar,
+            authoritativeWorldX: data.x,
+            authoritativeWorldY: data.y,
+            authoritativeRotation: targetRotation,
+            lastRemotePlayerPayload: remotePayload,
+          };
+          this.remoteBoats.set(playerId, boatData);
+          this.applyRemoteBoatGhostAppearance(boatData.sprite, data.isGhost ?? false);
+          this.layoutRemoteBoatHud(boatData, remotePayload);
+          continue;
         }
-        const remoteScale = boatDisplayScaleForLevel(data.level ?? 1);
-        boatData.sprite.setScale(remoteScale);
-        boatData.sprite.setPosition(data.x, data.y);
-        boatData.sprite.setRotation(data.rotation);
+        boatData.authoritativeWorldX = data.x;
+        boatData.authoritativeWorldY = data.y;
+        boatData.authoritativeRotation = targetRotation;
+        boatData.lastRemotePlayerPayload = remotePayload;
         this.applyRemoteBoatGhostAppearance(boatData.sprite, data.isGhost ?? false);
-        const displayName = data.name && data.name.length <= MAX_PLAYER_NAME_LENGTH ? data.name : shortId(playerId);
-        boatData.nameLabel.setText(displayName);
-        boatData.nameLabel.setStyle({ fontSize: `${boatNameFontSizePxForScale(remoteScale)}px` });
-        const labelOffset = nameLabelOffsetAboveBoatForScale(remoteScale);
-        boatData.nameLabel.setPosition(data.x, data.y - labelOffset);
-        const lifeRatio = (data.life ?? MAX_LIFE) / MAX_LIFE;
-        boatData.lifeBar?.clear();
-        if (boatData.lifeBar) {
-          const remoteLifeBarTopY = data.y - labelOffset - REMOTE_LIFE_BAR_OFFSET_ABOVE_NAME_CENTER;
-          this.drawBar(boatData.lifeBar, data.x - 25, remoteLifeBarTopY, 50, 6, 0x333333, 0xff0000, lifeRatio);
-        }
       }
       for (const playerId of this.remoteBoats.keys()) {
         if (!players.has(playerId)) {
@@ -1193,6 +1252,7 @@ export class GameScene extends Phaser.Scene {
     this.updateBoatMovement();
 
     this.checkPratCapture();
+    this.smoothRemoteBoatSpritesTowardAuthoritativeState();
   }
 
   private updateCameraZoom(): void {
@@ -1274,7 +1334,17 @@ export class GameScene extends Phaser.Scene {
         const serverX = simulationToPhaserPixels(me.x);
         const serverY = simulationToPhaserPixels(me.y);
         const dist = Phaser.Math.Distance.Between(boat.x, boat.y, serverX, serverY);
-        if (dist > simulationToPhaserPixels(120)) {
+        const reconciliationThresholdPhaser = simulationToPhaserPixels(120);
+        const awaitingFirstAuthoritativePlacement = !this.localBoatPositionSyncedFromAuthoritativeState;
+        if (awaitingFirstAuthoritativePlacement) {
+          boat.setPosition(serverX, serverY);
+          boat.setAlpha(1);
+          this.boatNameLabel.setAlpha(1);
+          if (!this.cameraFollowsLocalBoat) {
+            this.cameras.main.startFollow(boat, true, 0.1, 0.1);
+            this.cameraFollowsLocalBoat = true;
+          }
+        } else if (dist > reconciliationThresholdPhaser) {
           boat.setPosition(serverX, serverY);
         }
         this.localBoatPositionSyncedFromAuthoritativeState = true;

@@ -1,4 +1,5 @@
-import { Body, Controller, Get, HttpException, HttpStatus, Param, Post } from "@nestjs/common";
+import { Body, Controller, Get, HttpException, HttpStatus, Param, Post, Res } from "@nestjs/common";
+import type { Response } from "express";
 import { getLevelFromExperience } from "../level.util";
 import { SupabaseService } from "../supabase/supabase.service";
 
@@ -62,9 +63,10 @@ export class PlayersController {
   }
 
   @Get(":name")
-  async getByName(@Param("name") name: string): Promise<unknown> {
+  async getByName(@Param("name") name: string, @Res({ passthrough: false }) res: Response): Promise<void> {
     if (!this.supabaseService.isDatabaseConfigured()) {
-      return null;
+      res.status(200).json(null);
+      return;
     }
     try {
       const supabase = this.supabaseService.getAdminClient();
@@ -76,15 +78,16 @@ export class PlayersController {
         .eq("name", decodeURIComponent(name).trim())
         .maybeSingle();
       if (error || !data) {
-        return null;
+        res.status(200).json(null);
+        return;
       }
       const exp = Number.isFinite(Number(data.exp)) ? Number(data.exp) : 0;
-      return {
+      res.status(200).json({
         ...data,
         level: getLevelFromExperience(exp),
-      };
+      });
     } catch {
-      return null;
+      res.status(200).json(null);
     }
   }
 }

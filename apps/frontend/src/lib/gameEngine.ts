@@ -186,6 +186,8 @@ export class GameRoom {
   private pendingProjectileHitDealt: ProjectileHitDealtEvent[] = [];
   private projectileHitDealtEventsForBroadcast: ProjectileHitDealtEvent[] = [];
   private eliminationEventsForBroadcast: EliminationEvent[] = [];
+  /** Ignore MOVE inputs older than the last applied one (out-of-order HTTP responses). */
+  private lastAcceptedMoveClientWallTimestamp = new Map<string, number>();
 
   constructor(roomId: string) {
     this.roomId = roomId;
@@ -326,6 +328,7 @@ export class GameRoom {
 
   removePlayer(playerId: string): void {
     this.playerPresence.delete(playerId);
+    this.lastAcceptedMoveClientWallTimestamp.delete(playerId);
     this.players.delete(playerId);
     if (this.players.size === 0 && this.emptySince === null) {
       this.emptySince = Date.now();
@@ -342,6 +345,12 @@ export class GameRoom {
     this.touchPlayer(playerId);
     if (input.type === "MOVE" && input.x !== undefined && input.y !== undefined) {
       const previous = this.players.get(playerId) ?? this.defaultPlayer(playerId);
+      const lastAcceptedClientWallTimestamp =
+        this.lastAcceptedMoveClientWallTimestamp.get(playerId) ?? 0;
+      if (input.timestamp < lastAcceptedClientWallTimestamp) {
+        return {};
+      }
+      this.lastAcceptedMoveClientWallTimestamp.set(playerId, input.timestamp);
       this.players.set(playerId, {
         ...previous,
         x: input.x,

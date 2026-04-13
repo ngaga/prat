@@ -186,6 +186,8 @@ export class GameScene extends Phaser.Scene {
   private townEntities = new Map<string, TownEntity>();
   /** Tracks town ownership across SSE frames so we can toast on local capture. */
   private townPreviousOwnerById = new Map<string, string | null>();
+  /** Tracks capture progress across snapshots to trigger interception pulse VFX. */
+  private townPreviousContenderSalvosById = new Map<string, number>();
   private score: number = 0;
   private scoreText!: Phaser.GameObjects.Text;
   private readonly boatSpeed = simulationToPhaserPixels(PLAYER_BOAT_SPEED_SIMULATION_UNITS_PER_SECOND);
@@ -617,6 +619,7 @@ export class GameScene extends Phaser.Scene {
     }
     this.townEntities.clear();
     this.townPreviousOwnerById.clear();
+    this.townPreviousContenderSalvosById.clear();
     for (const octopus of this.octopuses.values()) {
       octopus.sprite.destroy();
       octopus.lifeBar.destroy();
@@ -1362,6 +1365,7 @@ export class GameScene extends Phaser.Scene {
       for (const [id, town] of Object.entries(townsRecord)) {
         seenIds.add(id);
         const previousOwnerId = this.townPreviousOwnerById.get(id);
+        const previousContenderSalvos = this.townPreviousContenderSalvosById.get(id);
         if (
           previousOwnerId !== undefined &&
           town.ownerId === localPlayerId &&
@@ -1369,7 +1373,18 @@ export class GameScene extends Phaser.Scene {
         ) {
           this.spawnTownCapturedToast();
         }
+        if (
+          previousContenderSalvos !== undefined &&
+          town.contenderId != null &&
+          town.contenderSalvos > previousContenderSalvos
+        ) {
+          this.spawnTownInterceptionBurst(
+            simulationToPhaserPixels(town.x),
+            simulationToPhaserPixels(town.y)
+          );
+        }
         this.townPreviousOwnerById.set(id, town.ownerId);
+        this.townPreviousContenderSalvosById.set(id, town.contenderSalvos);
         this.upsertTownVisual(id, town);
       }
       for (const id of Array.from(this.townEntities.keys())) {
@@ -1380,6 +1395,7 @@ export class GameScene extends Phaser.Scene {
           entity?.captureBar.destroy();
           this.townEntities.delete(id);
           this.townPreviousOwnerById.delete(id);
+          this.townPreviousContenderSalvosById.delete(id);
         }
       }
 
@@ -1523,6 +1539,25 @@ export class GameScene extends Phaser.Scene {
         duration: 1800,
         ease: "Sine.easeInOut",
         onComplete: () => label.destroy(),
+      });
+    } catch {
+      // Scene tearing down
+    }
+  }
+
+  /** Green pulse when a projectile is intercepted by a town and capture progress increases. */
+  private spawnTownInterceptionBurst(worldX: number, worldY: number): void {
+    if (!this.isSceneActive) return;
+    try {
+      const flash = this.add.circle(worldX, worldY, 64, 0x00c853, 0.36);
+      flash.setDepth(12);
+      this.tweens.add({
+        targets: flash,
+        alpha: 0,
+        scale: 2.2,
+        duration: 380,
+        ease: "Sine.easeOut",
+        onComplete: () => flash.destroy(),
       });
     } catch {
       // Scene tearing down

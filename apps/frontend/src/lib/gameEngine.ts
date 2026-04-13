@@ -77,6 +77,8 @@ const ROOM_EMPTY_CLEANUP_MS = 120_000;
 const STINGRAY_LIFE = 600;
 const STINGRAY_WAVE_FREQUENCY = 0.5;
 const STINGRAY_SPAWN_INTERVAL_MS = 4000;
+/** Wrapped rays no longer despawn at the east edge, so cap count or spawns would grow without limit. */
+const MAX_STINGRAYS_IN_WORLD = 6;
 
 const LETTER_SPEED_SIMULATION_UNITS_PER_SECOND = PLAYER_LETTER_SPEED_SIMULATION_UNITS_PER_SECOND;
 const LETTER_DAMAGE = LETTER_DAMAGE_SIMULATION_UNITS;
@@ -807,7 +809,10 @@ export class GameRoom {
     const deltaSeconds = GAME_LOOP_INTERVAL_MS / 1000;
     const toRemove: string[] = [];
 
-    if (now - this.lastStingraySpawnTime >= STINGRAY_SPAWN_INTERVAL_MS) {
+    if (
+      this.stingrays.size < MAX_STINGRAYS_IN_WORLD &&
+      now - this.lastStingraySpawnTime >= STINGRAY_SPAWN_INTERVAL_MS
+    ) {
       this.lastStingraySpawnTime = now;
       this.spawnStingray(now);
     }
@@ -820,7 +825,11 @@ export class GameRoom {
         stingray.baseY +
         STINGRAY_AMPLITUDE_SIMULATION_UNITS * Math.sin(2 * Math.PI * STINGRAY_WAVE_FREQUENCY * elapsedSeconds);
       if (stingray.life <= 0) {
-        toRemove.push(stingray.id);
+        if (this.stingrayHasPassenger(stingray.id)) {
+          stingray.life = 1;
+        } else {
+          toRemove.push(stingray.id);
+        }
       }
     }
 
@@ -828,6 +837,15 @@ export class GameRoom {
       this.detachPlayersFromStingray(stingrayId);
       this.stingrays.delete(stingrayId);
     }
+  }
+
+  /** True if a non-ghost player is locked to this stingray (wrap ride must not delete the ray). */
+  private stingrayHasPassenger(stingrayId: string): boolean {
+    for (const p of this.players.values()) {
+      if (p.isGhost) continue;
+      if (p.attachedStingrayId === stingrayId) return true;
+    }
+    return false;
   }
 
   private detachPlayersFromStingray(stingrayId: string): void {
@@ -1048,6 +1066,9 @@ export class GameRoom {
       if (distance(projectile.x, projectile.y, stingray.x, stingray.y) < PROJECTILE_HIT_RADIUS) {
         const damageDealt = projectile.damage;
         stingray.life -= damageDealt;
+        if (stingray.life <= 0 && this.stingrayHasPassenger(stingrayId)) {
+          stingray.life = 1;
+        }
         this.pendingProjectileHitDealt.push({
           id: `hit-dealt-${randomEventSuffix()}`,
           targetKind: "stingray",

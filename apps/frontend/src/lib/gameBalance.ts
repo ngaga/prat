@@ -42,6 +42,8 @@ export const PLAYER_PROJECTILE_SHORT_RANGE = 120;
 export const STINGRAY_ESCAPE_SALVO_COUNT = 5;
 /** After breaking free by shooting, ignore stingray capture until this many ms pass (avoids instant re-grab). */
 export const STINGRAY_REATTACH_COOLDOWN_MS = 2000;
+/** Life restored per second while a non-ghost player is carried by a stingray (authoritative server). */
+export const STINGRAY_PASSENGER_LIFE_PER_SECOND = 5;
 
 export function getLevelFromExperience(totalExperience: number): number {
   const safe = Math.max(0, Math.floor(Number(totalExperience) || 0));

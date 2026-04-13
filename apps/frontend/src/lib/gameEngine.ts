@@ -14,6 +14,7 @@ import {
   PRAT_SPAWN_INTERVAL_MS,
   PRAT_SPAWN_RADIUS,
   STINGRAY_ESCAPE_SALVO_COUNT,
+  STINGRAY_PASSENGER_LIFE_PER_SECOND,
   STINGRAY_REATTACH_COOLDOWN_MS,
   TOWN_CAPTURE_INTERCEPT_RADIUS,
   TOWN_CAPTURE_SALVOS_REQUIRED,
@@ -300,7 +301,7 @@ export class GameRoom {
         fontSize,
         color: "#00aa00",
         isHeal: true,
-        healAmount: Math.floor(MAX_LIFE * HEAL_PERCENT_OF_MAX),
+        healAmount: MAX_LIFE,
       });
       return;
     }
@@ -502,25 +503,42 @@ export class GameRoom {
     }
     // TODO: remove isHeal logic from this function.
     if (prat.isHeal) {
-      const heal = prat.healAmount ?? 0;
-      playerState.life = Math.min(MAX_LIFE, (playerState.life ?? MAX_LIFE) + heal);
-      this.pendingProjectileHitReceived.push({
-        id: `hit-rcv-${randomEventSuffix()}`,
-        targetPlayerId: playerId,
-        attackerId: "prat",
-        damage: -heal,
-        x: captureX,
-        y: captureY,
-      });
+      const previousLife = playerState.life ?? MAX_LIFE;
+      playerState.life = MAX_LIFE;
+      const restored = MAX_LIFE - previousLife;
+      if (restored > 0) {
+        this.pendingProjectileHitReceived.push({
+          id: `hit-rcv-${randomEventSuffix()}`,
+          targetPlayerId: playerId,
+          attackerId: "prat",
+          damage: -restored,
+          x: captureX,
+          y: captureY,
+        });
+      }
     } else if (playerState.isGhost) {
       const next = (playerState.ghostPratsCaptured ?? 0) + 1;
       if (next >= GHOST_PRATS_TO_LEAVE) {
         playerState.isGhost = false;
         playerState.ghostPratsCaptured = 0;
+        playerState.life = MAX_LIFE;
       } else {
         playerState.ghostPratsCaptured = next;
       }
     } else {
+      const lifeRestore = Math.floor(MAX_LIFE * HEAL_PERCENT_OF_MAX);
+      const previousLife = playerState.life ?? MAX_LIFE;
+      playerState.life = Math.min(MAX_LIFE, previousLife + lifeRestore);
+      if (lifeRestore > 0) {
+        this.pendingProjectileHitReceived.push({
+          id: `hit-rcv-${randomEventSuffix()}`,
+          targetPlayerId: playerId,
+          attackerId: "prat",
+          damage: -lifeRestore,
+          x: captureX,
+          y: captureY,
+        });
+      }
       playerState.score = (playerState.score ?? 0) + prat.power;
       playerState.experience = (playerState.experience ?? 0) + XP_PER_PRAT;
       playerState.level = getLevelFromExperience(playerState.experience);
@@ -915,6 +933,20 @@ export class GameRoom {
           stingrayEscapeLastCountedSalvoId: resetEscape ? undefined : current.stingrayEscapeLastCountedSalvoId,
         });
       }
+    }
+
+    const deltaSeconds = GAME_LOOP_INTERVAL_MS / 1000;
+    const healThisTick = STINGRAY_PASSENGER_LIFE_PER_SECOND * deltaSeconds;
+    for (const [playerId, passenger] of this.players) {
+      if (passenger.isGhost) continue;
+      const carryingStingrayId = passenger.attachedStingrayId;
+      if (carryingStingrayId === undefined || !stingrayIds.has(carryingStingrayId)) continue;
+      const currentLife = passenger.life ?? MAX_LIFE;
+      if (currentLife >= MAX_LIFE) continue;
+      this.players.set(playerId, {
+        ...passenger,
+        life: Math.min(MAX_LIFE, currentLife + healThisTick),
+      });
     }
   }
 

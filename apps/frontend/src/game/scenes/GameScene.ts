@@ -287,15 +287,15 @@ export class GameScene extends Phaser.Scene {
   private mobileJoystickThumbOffsetScreenX = 0;
   private mobileJoystickThumbOffsetScreenY = 0;
   /** Sized from viewport in layoutMobileJoystick; grab / move logic uses these. */
-  private mobileJoystickBaseRadiusPixels = 100;
-  private mobileJoystickThumbRadiusPixels = 44;
+  private mobileJoystickBaseRadiusPixels = 50;
+  private mobileJoystickThumbRadiusPixels = 22;
   private readonly mobileJoystickGrabMarginMultiplier = 1.55;
-  private mobileJoystickMaxThumbOffsetPixels = 100;
-  private mobileJoystickDeadZonePixels = 16;
+  private mobileJoystickMaxThumbOffsetPixels = 50;
+  private mobileJoystickDeadZonePixels = 8;
   private readonly mobileJoystickMoveLeadDistancePixels = 200;
-  /** Closer world view on touch-only layout (desktop zoom is unchanged). */
-  private readonly mobileCameraZoomMultiplier = 3.75;
-  private readonly mobileCameraZoomUpperCap = 6.5;
+  /** Closer world view on touch-only layout (desktop zoom is unchanged). ~2x fit was requested; cap avoids extreme crop on tall phones. */
+  private readonly mobileCameraZoomMultiplier = 2;
+  private readonly mobileCameraZoomUpperCap = 3.25;
   private readonly mobileJoystickWorldScratch = new Phaser.Math.Vector2();
   /** Short-lived; kept so we can pin it to the viewport while the camera moves. */
   private mobileTutorialHudText: Phaser.GameObjects.Text | null = null;
@@ -1291,21 +1291,21 @@ export class GameScene extends Phaser.Scene {
     if (!this.mobileControlsEnabled) return;
     const shortSide = Math.min(this.scale.width, this.scale.height);
     this.mobileJoystickBaseRadiusPixels = Phaser.Math.Clamp(
-      Math.round(shortSide * 0.48),
-      280,
-      520
+      Math.round(shortSide * 0.24),
+      140,
+      260
     );
     this.mobileJoystickThumbRadiusPixels = Math.max(
-      120,
+      60,
       Math.round(this.mobileJoystickBaseRadiusPixels * 0.42)
     );
     this.mobileJoystickMaxThumbOffsetPixels = this.mobileJoystickBaseRadiusPixels;
     this.mobileJoystickDeadZonePixels = Math.max(
-      16,
+      8,
       Math.round(this.mobileJoystickBaseRadiusPixels * 0.14)
     );
     const edgeInset = Math.max(
-      52,
+      26,
       Math.round(this.mobileJoystickBaseRadiusPixels * 1.22)
     );
     this.mobileJoystickCenterScreenX = edgeInset;

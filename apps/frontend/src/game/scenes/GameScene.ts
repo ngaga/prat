@@ -164,8 +164,8 @@ function shortId(uuid: string): string {
   return uuid.slice(0, 8);
 }
 
-function formatPratsHudLabel(pratsCaptured: number, prats: number): string {
-  return `Captured: ${pratsCaptured}  Prats: ${prats}`;
+function formatPratsHudLabel(prats: number): string {
+  return `Prats: ${prats}`;
 }
 
 function normalizeDirection(
@@ -432,7 +432,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.scoreText = this.add
-      .text(0, 0, formatPratsHudLabel(0, 0), {
+      .text(0, 0, formatPratsHudLabel(0), {
         fontSize: "20px",
         color: "#000",
       })
@@ -1267,7 +1267,7 @@ export class GameScene extends Phaser.Scene {
       this.killsStingray = me.killsStingray ?? 0;
       this.pratsCaptured = me.pratsCaptured ?? 0;
       this.prats = me.prats ?? 0;
-      this.scoreText.setText(formatPratsHudLabel(this.pratsCaptured, this.prats));
+      this.scoreText.setText(formatPratsHudLabel(this.prats));
       this.localIsGhost = me.isGhost ?? false;
       this.syncedGhostPratsCaptured = me.ghostPratsCaptured ?? 0;
       const previousAttachedId = this.previousLocalAttachedStingrayId;

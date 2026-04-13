@@ -1,6 +1,8 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { useEffect } from "react";
+import { warmupBackendOncePerSession } from "@/lib/backendWarmup";
 
 const PhaserGame = dynamic(
   () => import("@/components/PhaserGame").then((mod) => mod.PhaserGame),
@@ -15,5 +17,9 @@ const PhaserGame = dynamic(
 );
 
 export function GameSection() {
+  useEffect(() => {
+    void warmupBackendOncePerSession();
+  }, []);
+
   return <PhaserGame />;
 }

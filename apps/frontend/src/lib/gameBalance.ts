@@ -38,6 +38,11 @@ export const GHOST_PRATS_TO_LEAVE = 10;
 /** Max travel distance for fallback close-range letters. Simulation units. */
 export const PLAYER_PROJECTILE_SHORT_RANGE = 120;
 
+/** Player salvos (SHOOT) that hit the carrying stingray required to break free (first hit per salvo counts). */
+export const STINGRAY_ESCAPE_SALVO_COUNT = 5;
+/** After breaking free by shooting, ignore stingray capture until this many ms pass (avoids instant re-grab). */
+export const STINGRAY_REATTACH_COOLDOWN_MS = 2000;
+
 export function getLevelFromExperience(totalExperience: number): number {
   const safe = Math.max(0, Math.floor(Number(totalExperience) || 0));
   return Math.floor(safe / EXPERIENCE_PER_LEVEL) + 1;

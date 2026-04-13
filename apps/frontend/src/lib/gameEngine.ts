@@ -13,6 +13,8 @@ import {
   PRAT_CAPTURE_RADIUS,
   PRAT_SPAWN_INTERVAL_MS,
   PRAT_SPAWN_RADIUS,
+  STINGRAY_ESCAPE_SALVO_COUNT,
+  STINGRAY_REATTACH_COOLDOWN_MS,
   TOWN_CAPTURE_INTERCEPT_RADIUS,
   TOWN_CAPTURE_SALVOS_REQUIRED,
   TOWN_COUNT,
@@ -27,6 +29,7 @@ import {
   PLAYER_PROJECTILE_MAX_TRAVEL_SIMULATION_UNITS,
   PROJECTILE_HIT_RADIUS_SIMULATION_UNITS,
   STINGRAY_AMPLITUDE_SIMULATION_UNITS,
+  STINGRAY_PLAYER_CAPTURE_RADIUS_SIMULATION_UNITS,
   STINGRAY_SPEED_SIMULATION_UNITS_PER_SECOND,
   WORLD_HALF_EXTENT_SIMULATION_UNITS,
   WORLD_MARGIN_SIMULATION_UNITS,
@@ -57,6 +60,10 @@ export const GAME_LOOP_INTERVAL_MS = 50;
 
 const WORLD_SIZE = WORLD_HALF_EXTENT_SIMULATION_UNITS;
 const WORLD_MARGIN = WORLD_MARGIN_SIMULATION_UNITS;
+const WORLD_X_MIN = -WORLD_SIZE + WORLD_MARGIN;
+const WORLD_X_MAX = WORLD_SIZE - WORLD_MARGIN;
+const PLAYABLE_WIDTH_X = WORLD_X_MAX - WORLD_X_MIN;
+const STINGRAY_CAPTURE_RADIUS = STINGRAY_PLAYER_CAPTURE_RADIUS_SIMULATION_UNITS;
 const OCTOPUS_LIFE = 80;
 const OCTOPUS_LIFETIME_MS = 20_000;
 const OCTOPUS_SHOOT_DELAY_MS = 5000;
@@ -65,7 +72,8 @@ const OCTOPUS_SPAWN_CHECK_INTERVAL_MS = 3000;
 const OCTOPUS_SPAWN_PROBABILITY = 1 / 3;
 const MAX_OCTOPUSES_IN_WORLD = 8;
 const ROOM_EMPTY_CLEANUP_MS = 120_000;
-const STINGRAY_LIFE = 60;
+/** High enough that escape-by-salvos completes before typical death (5 salvos x 4 letters x damage). */
+const STINGRAY_LIFE = 600;
 const STINGRAY_WAVE_FREQUENCY = 0.5;
 const STINGRAY_SPAWN_INTERVAL_MS = 4000;
 
@@ -109,6 +117,17 @@ function clampWorld(value: number): number {
   const min = -WORLD_SIZE + WORLD_MARGIN;
   const max = WORLD_SIZE - WORLD_MARGIN;
   return Math.min(max, Math.max(min, value));
+}
+
+function wrapPlayableX(x: number): number {
+  let next = x;
+  while (next > WORLD_X_MAX) {
+    next -= PLAYABLE_WIDTH_X;
+  }
+  while (next < WORLD_X_MIN) {
+    next += PLAYABLE_WIDTH_X;
+  }
+  return next;
 }
 
 function nearestPlayer(enemyX: number, enemyY: number, players: Map<string, PlayerState>): PlayerState | null {
@@ -363,6 +382,19 @@ export class GameRoom {
         return {};
       }
       this.lastAcceptedMoveClientWallTimestamp.set(playerId, input.timestamp);
+      const carriedByStingray =
+        previous.attachedStingrayId !== undefined &&
+        this.stingrays.has(previous.attachedStingrayId);
+      if (carriedByStingray) {
+        this.players.set(playerId, {
+          ...previous,
+          rotation: input.rotation ?? previous.rotation,
+          name: input.name ?? previous.name,
+          isGhost: previous.isGhost,
+          ghostPratsCaptured: previous.ghostPratsCaptured,
+        });
+        return {};
+      }
       this.players.set(playerId, {
         ...previous,
         x: input.x,
@@ -661,6 +693,7 @@ export class GameRoom {
     this.eliminationEventsForBroadcast = [];
     this.updateEnemiesAndSpawns(now);
     this.updateStingrays(now);
+    this.applyStingrayPlayerAttachment(now);
     this.spawnPratsNearPlayers(now);
     this.updateTowns(now);
     this.updateProjectiles(now);
@@ -748,6 +781,7 @@ export class GameRoom {
 
   private updateStingrays(now: number): void {
     if (!getStingraysSpawnOnServer()) {
+      this.detachAllPlayersFromStingrays();
       this.stingrays.clear();
       return;
     }
@@ -762,17 +796,125 @@ export class GameRoom {
 
     for (const stingray of this.stingrays.values()) {
       stingray.x += STINGRAY_SPEED_SIMULATION_UNITS_PER_SECOND * deltaSeconds;
+      stingray.x = wrapPlayableX(stingray.x);
       const elapsedSeconds = (now - stingray.spawnTime) / 1000;
       stingray.y =
         stingray.baseY +
         STINGRAY_AMPLITUDE_SIMULATION_UNITS * Math.sin(2 * Math.PI * STINGRAY_WAVE_FREQUENCY * elapsedSeconds);
-      if (stingray.x > WORLD_SIZE + 50 || stingray.life <= 0) {
+      if (stingray.life <= 0) {
         toRemove.push(stingray.id);
       }
     }
 
     for (const stingrayId of toRemove) {
+      this.detachPlayersFromStingray(stingrayId);
       this.stingrays.delete(stingrayId);
+    }
+  }
+
+  private detachPlayersFromStingray(stingrayId: string): void {
+    for (const [playerId, player] of this.players) {
+      if (player.attachedStingrayId !== stingrayId) continue;
+      this.players.set(playerId, {
+        ...player,
+        attachedStingrayId: undefined,
+        stingrayEscapeSalvoHits: 0,
+        stingrayEscapeLastCountedSalvoId: undefined,
+      });
+    }
+  }
+
+  private detachAllPlayersFromStingrays(): void {
+    for (const [playerId, player] of this.players) {
+      if (player.attachedStingrayId === undefined) continue;
+      this.players.set(playerId, {
+        ...player,
+        attachedStingrayId: undefined,
+        stingrayEscapeSalvoHits: 0,
+        stingrayEscapeLastCountedSalvoId: undefined,
+      });
+    }
+  }
+
+  /**
+   * While attached, snap to the carrying stingray every tick without a distance check so map wrap
+   * does not drop the player (toroidal gap would exceed STINGRAY_CAPTURE_RADIUS).
+   */
+  private applyStingrayPlayerAttachment(now: number): void {
+    const stingrayIds = new Set(this.stingrays.keys());
+
+    for (const playerId of [...this.players.keys()]) {
+      const player = this.players.get(playerId);
+      if (!player || !player.isGhost) continue;
+      if (player.attachedStingrayId === undefined) continue;
+      this.players.set(playerId, {
+        ...player,
+        attachedStingrayId: undefined,
+        stingrayEscapeSalvoHits: 0,
+        stingrayEscapeLastCountedSalvoId: undefined,
+      });
+    }
+
+    for (const playerId of [...this.players.keys()]) {
+      const player = this.players.get(playerId);
+      if (!player || player.isGhost) continue;
+      const attachedId = player.attachedStingrayId;
+      if (attachedId !== undefined && !stingrayIds.has(attachedId)) {
+        this.players.set(playerId, {
+          ...player,
+          attachedStingrayId: undefined,
+          stingrayEscapeSalvoHits: 0,
+          stingrayEscapeLastCountedSalvoId: undefined,
+        });
+      }
+    }
+
+    for (const playerId of [...this.players.keys()]) {
+      const player = this.players.get(playerId);
+      if (!player || player.isGhost) continue;
+      const current = this.players.get(playerId)!;
+
+      const carryingId = current.attachedStingrayId;
+      if (carryingId !== undefined && stingrayIds.has(carryingId)) {
+        const stingray = this.stingrays.get(carryingId)!;
+        this.players.set(playerId, {
+          ...current,
+          x: stingray.x,
+          y: clampWorld(stingray.y),
+          attachedStingrayId: carryingId,
+        });
+        continue;
+      }
+
+      if (now < (current.stingrayReattachBlockedUntilTimestamp ?? 0)) {
+        continue;
+      }
+
+      let closestId: string | null = null;
+      let closestDist = Infinity;
+      for (const [stingrayId, stingray] of this.stingrays) {
+        const dist = distance(current.x, current.y, stingray.x, stingray.y);
+        if (dist < STINGRAY_CAPTURE_RADIUS && dist < closestDist) {
+          closestDist = dist;
+          closestId = stingrayId;
+        }
+      }
+
+      if (closestId !== null) {
+        const stingray = this.stingrays.get(closestId)!;
+        const switchedRay =
+          current.attachedStingrayId !== undefined && current.attachedStingrayId !== closestId;
+        const newGrab = current.attachedStingrayId === undefined;
+        const resetEscape = switchedRay || newGrab;
+        this.players.set(playerId, {
+          ...current,
+          x: stingray.x,
+          y: clampWorld(stingray.y),
+          attachedStingrayId: closestId,
+          stingrayEscapeSalvoHits: resetEscape ? 0 : (current.stingrayEscapeSalvoHits ?? 0),
+          stingrayEscapeLastCountedSalvoId: resetEscape ? undefined : current.stingrayEscapeLastCountedSalvoId,
+        });
+      }
     }
   }
 
@@ -884,7 +1026,36 @@ export class GameRoom {
           y: stingray.y,
         });
         this.projectiles.delete(projectileId);
+
+        const hitTime = Date.now();
+        const shooterBeforeEscape = this.players.get(projectile.shooterId);
+        if (shooterBeforeEscape && shooterBeforeEscape.attachedStingrayId === stingrayId) {
+          const salvoId = projectile.salvoId;
+          let salvoHits = shooterBeforeEscape.stingrayEscapeSalvoHits ?? 0;
+          let lastCountedSalvo = shooterBeforeEscape.stingrayEscapeLastCountedSalvoId;
+          if (salvoId !== lastCountedSalvo) {
+            salvoHits += 1;
+            lastCountedSalvo = salvoId;
+          }
+          if (salvoHits >= STINGRAY_ESCAPE_SALVO_COUNT) {
+            this.players.set(projectile.shooterId, {
+              ...shooterBeforeEscape,
+              attachedStingrayId: undefined,
+              stingrayEscapeSalvoHits: 0,
+              stingrayEscapeLastCountedSalvoId: undefined,
+              stingrayReattachBlockedUntilTimestamp: hitTime + STINGRAY_REATTACH_COOLDOWN_MS,
+            });
+          } else {
+            this.players.set(projectile.shooterId, {
+              ...shooterBeforeEscape,
+              stingrayEscapeSalvoHits: salvoHits,
+              stingrayEscapeLastCountedSalvoId: lastCountedSalvo,
+            });
+          }
+        }
+
         if (stingray.life <= 0) {
+          this.detachPlayersFromStingray(stingrayId);
           this.stingrays.delete(stingrayId);
           const shooter = this.players.get(projectile.shooterId);
           if (shooter && !shooter.isGhost) {
@@ -948,6 +1119,9 @@ export class GameRoom {
           playerState.life = MAX_LIFE;
           playerState.isGhost = true;
           playerState.ghostPratsCaptured = 0;
+          playerState.attachedStingrayId = undefined;
+          playerState.stingrayEscapeSalvoHits = 0;
+          playerState.stingrayEscapeLastCountedSalvoId = undefined;
         }
         this.players.set(playerId, playerState);
         return true;

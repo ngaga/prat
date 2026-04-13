@@ -61,8 +61,12 @@ interface StingrayEntity {
   sprite: Phaser.GameObjects.Image;
   lifeBar: Phaser.GameObjects.Graphics;
   life: number;
+  rayMaxLife: number;
   baseY: number;
   spawnTime: number;
+  /** When local player rides this ray, sprite eases toward these display coordinates (SSE targets). */
+  authoritativeWorldX?: number;
+  authoritativeWorldY?: number;
 }
 
 const WORLD_SIZE = simulationToPhaserPixels(WORLD_HALF_EXTENT_SIMULATION_UNITS);
@@ -89,6 +93,8 @@ const REVIVE_PRAT_LABEL_TEXT = "PRAT!";
 const DEATH_PRAT_OVERLAY_DEPTH = 100000;
 /** Town letter blink: 0.5 Hz full cycle => 1000 ms per half (bright/dim). */
 const TOWN_OWNED_BLINK_HALF_PERIOD_MS = 1000;
+/** Ease local boat and carried stingray toward SSE targets (same idea as remote boat smoothing). */
+const STINGRAY_CARRY_POSITION_SMOOTHING_RATE = 22;
 const TOWN_OWNER_NAME_OFFSET_ABOVE_LETTER_PX = 36;
 /** Soft pink for local-owned town letter (avoids harsh blue at night). */
 const TOWN_LETTER_COLOR_LOCAL = "#c989a8";
@@ -234,6 +240,15 @@ export class GameScene extends Phaser.Scene {
    * server random spawn.
    */
   private localBoatPositionSyncedFromAuthoritativeState = false;
+  /** Server `attachedStingrayId`; when set, local click-move is disabled. */
+  private localAttachedStingrayId: string | undefined = undefined;
+  /** Last SSE boat position in Phaser space while carried (eased toward each frame). */
+  private localAttachedAuthoritativePhaserX = 0;
+  private localAttachedAuthoritativePhaserY = 0;
+  /** Detect edge to town-style pulse on stingray grab. */
+  private previousLocalAttachedStingrayId: string | undefined = undefined;
+  /** Green pulse ring while carried by a stingray (town interception style). */
+  private stingrayCaptureRing: Phaser.GameObjects.Arc | null = null;
   /** Camera follow starts after the first authoritative boat position (avoids framing 0,0). */
   private cameraFollowsLocalBoat = false;
   private localIsGhost = false;
@@ -630,6 +645,11 @@ export class GameScene extends Phaser.Scene {
       stingray.lifeBar.destroy();
     }
     this.stingrays.clear();
+    if (this.stingrayCaptureRing) {
+      this.tweens.killTweensOf(this.stingrayCaptureRing);
+      this.stingrayCaptureRing.destroy();
+      this.stingrayCaptureRing = null;
+    }
     this.multiplayer.disconnect();
     this.setLocalGhostCameraInversion(false);
     for (const [, boatData] of this.remoteBoats) {
@@ -1073,6 +1093,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   private updateBoatMovement(): void {
+    if (this.localAttachedStingrayId !== undefined) {
+      this.boat.setVelocity(0, 0);
+      return;
+    }
     if (this.moveTargetX === null || this.moveTargetY === null) {
       this.boat.setVelocity(0, 0);
       return;
@@ -1165,6 +1189,8 @@ export class GameScene extends Phaser.Scene {
     }
     this.updateStingrays();
     this.updateBoatMovement();
+    this.smoothLocalBoatTowardAuthoritativeWhenAttached();
+    this.positionStingrayCarryRing();
 
     this.checkPratCapture();
     this.smoothRemoteBoatSpritesTowardAuthoritativeState();
@@ -1244,6 +1270,12 @@ export class GameScene extends Phaser.Scene {
       this.scoreText.setText(formatPratsHudLabel(this.pratsCaptured, this.prats));
       this.localIsGhost = me.isGhost ?? false;
       this.syncedGhostPratsCaptured = me.ghostPratsCaptured ?? 0;
+      const previousAttachedId = this.previousLocalAttachedStingrayId;
+      this.localAttachedStingrayId = me.attachedStingrayId;
+      if (me.attachedStingrayId !== undefined) {
+        this.moveTargetX = null;
+        this.moveTargetY = null;
+      }
 
       if (boat) {
         const serverX = simulationToPhaserPixels(me.x);
@@ -1251,6 +1283,10 @@ export class GameScene extends Phaser.Scene {
         const dist = Phaser.Math.Distance.Between(boat.x, boat.y, serverX, serverY);
         const reconciliationThresholdPhaser = simulationToPhaserPixels(120);
         const awaitingFirstAuthoritativePlacement = !this.localBoatPositionSyncedFromAuthoritativeState;
+        const justAttachedToStingray =
+          me.attachedStingrayId !== undefined &&
+          previousAttachedId === undefined &&
+          this.localBoatPositionSyncedFromAuthoritativeState;
         if (awaitingFirstAuthoritativePlacement) {
           boat.setPosition(serverX, serverY);
           boat.setAlpha(1);
@@ -1259,12 +1295,21 @@ export class GameScene extends Phaser.Scene {
             this.cameras.main.startFollow(boat, true, 0.1, 0.1);
             this.cameraFollowsLocalBoat = true;
           }
+        } else if (me.attachedStingrayId !== undefined) {
+          this.localAttachedAuthoritativePhaserX = serverX;
+          this.localAttachedAuthoritativePhaserY = serverY;
+          if (justAttachedToStingray) {
+            this.spawnTownInterceptionBurst(serverX, serverY);
+          }
         } else if (dist > reconciliationThresholdPhaser) {
           boat.setPosition(serverX, serverY);
         }
         this.localBoatPositionSyncedFromAuthoritativeState = true;
         this.refreshLocalBoatDisplayScale();
       }
+
+      this.previousLocalAttachedStingrayId = me.attachedStingrayId;
+      this.syncStingrayCarryRing(me.attachedStingrayId !== undefined);
 
       this.applyLocalGhostPresentationAfterServer(me, wasGhost);
 
@@ -1545,7 +1590,9 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** Green pulse when a projectile is intercepted by a town and capture progress increases. */
+  /**
+   * Green pulse used when a town intercepts a shot; also when the local player is grabbed by a stingray.
+   */
   private spawnTownInterceptionBurst(worldX: number, worldY: number): void {
     if (!this.isSceneActive) return;
     try {
@@ -1561,6 +1608,52 @@ export class GameScene extends Phaser.Scene {
       });
     } catch {
       // Scene tearing down
+    }
+  }
+
+  /** Pulsing ring matching town interception color while the server reports stingray carry. */
+  private syncStingrayCarryRing(attached: boolean): void {
+    if (!attached) {
+      if (this.stingrayCaptureRing) {
+        this.tweens.killTweensOf(this.stingrayCaptureRing);
+        this.stingrayCaptureRing.destroy();
+        this.stingrayCaptureRing = null;
+      }
+      return;
+    }
+    if (this.stingrayCaptureRing || !this.boat) return;
+    try {
+      const ring = this.add.circle(this.boat.x, this.boat.y, 52, 0x00c853, 0.2);
+      ring.setStrokeStyle(3, 0x00c853, 0.45);
+      ring.setDepth(5);
+      this.stingrayCaptureRing = ring;
+      this.tweens.add({
+        targets: ring,
+        scale: { from: 0.88, to: 1.14 },
+        alpha: { from: 0.38, to: 0.12 },
+        duration: 650,
+        yoyo: true,
+        repeat: -1,
+        ease: "Sine.easeInOut",
+      });
+    } catch {
+      this.stingrayCaptureRing = null;
+    }
+  }
+
+  private smoothLocalBoatTowardAuthoritativeWhenAttached(): void {
+    if (this.localAttachedStingrayId === undefined || !this.boat) return;
+    const deltaSeconds = this.game.loop.delta / 1000;
+    const positionBlend = 1 - Math.exp(-STINGRAY_CARRY_POSITION_SMOOTHING_RATE * deltaSeconds);
+    const targetX = this.localAttachedAuthoritativePhaserX;
+    const targetY = this.localAttachedAuthoritativePhaserY;
+    this.boat.x += (targetX - this.boat.x) * positionBlend;
+    this.boat.y += (targetY - this.boat.y) * positionBlend;
+  }
+
+  private positionStingrayCarryRing(): void {
+    if (this.stingrayCaptureRing && this.boat) {
+      this.stingrayCaptureRing.setPosition(this.boat.x, this.boat.y);
     }
   }
 
@@ -1690,7 +1783,9 @@ export class GameScene extends Phaser.Scene {
         seenIds.add(id);
         const rayX = simulationToPhaserPixels(ray.x);
         const rayY = simulationToPhaserPixels(ray.y);
+        const isLocalCarrier = id === this.localAttachedStingrayId;
         let entity = this.stingrays.get(id);
+        const maxLife = ray.maxLife > 0 ? ray.maxLife : STINGRAY_LIFE;
         if (!entity) {
           const sprite = this.add.image(rayX, rayY, "stingray");
           sprite.setScale(1.2);
@@ -1702,20 +1797,34 @@ export class GameScene extends Phaser.Scene {
             sprite,
             lifeBar,
             life: ray.life,
+            rayMaxLife: maxLife,
             baseY: ray.baseY,
             spawnTime: ray.spawnTime,
           };
+          if (isLocalCarrier) {
+            entity.authoritativeWorldX = rayX;
+            entity.authoritativeWorldY = rayY;
+          }
           this.stingrays.set(id, entity);
         } else {
-          entity.sprite.setPosition(rayX, rayY);
           entity.life = ray.life;
+          entity.rayMaxLife = maxLife;
           entity.baseY = ray.baseY;
           entity.spawnTime = ray.spawnTime;
+          if (isLocalCarrier) {
+            entity.authoritativeWorldX = rayX;
+            entity.authoritativeWorldY = rayY;
+          } else {
+            entity.authoritativeWorldX = undefined;
+            entity.authoritativeWorldY = undefined;
+            entity.sprite.setPosition(rayX, rayY);
+          }
         }
-        const maxLife = ray.maxLife > 0 ? ray.maxLife : STINGRAY_LIFE;
         const lifeRatio = ray.life / maxLife;
         entity.lifeBar.clear();
-        this.drawBar(entity.lifeBar, rayX - 20, rayY - 35, 40, 5, 0x333333, 0xff6600, lifeRatio);
+        const barCenterX = isLocalCarrier ? entity.sprite.x : rayX;
+        const barCenterY = isLocalCarrier ? entity.sprite.y : rayY;
+        this.drawBar(entity.lifeBar, barCenterX - 20, barCenterY - 35, 40, 5, 0x333333, 0xff6600, lifeRatio);
       }
       for (const id of Array.from(this.stingrays.keys())) {
         if (!seenIds.has(id)) {
@@ -1795,7 +1904,30 @@ export class GameScene extends Phaser.Scene {
   }
 
   private updateStingrays(): void {
-    // Stingray motion and spawn come from the game server via applyServerStingrayState.
+    // Motion and spawn come from the server via applyServerStingrayState; ease the sprite that carries the local player.
+    if (!this.isSceneActive || this.stingrays.size === 0) return;
+    const deltaSeconds = this.game.loop.delta / 1000;
+    const positionBlend = 1 - Math.exp(-STINGRAY_CARRY_POSITION_SMOOTHING_RATE * deltaSeconds);
+    for (const [id, entity] of this.stingrays) {
+      const ax = entity.authoritativeWorldX;
+      const ay = entity.authoritativeWorldY;
+      if (id !== this.localAttachedStingrayId || ax === undefined || ay === undefined) continue;
+      entity.sprite.x += (ax - entity.sprite.x) * positionBlend;
+      entity.sprite.y += (ay - entity.sprite.y) * positionBlend;
+      const maxLife = entity.rayMaxLife > 0 ? entity.rayMaxLife : STINGRAY_LIFE;
+      const lifeRatio = entity.life / maxLife;
+      entity.lifeBar.clear();
+      this.drawBar(
+        entity.lifeBar,
+        entity.sprite.x - 20,
+        entity.sprite.y - 35,
+        40,
+        5,
+        0x333333,
+        0xff6600,
+        lifeRatio
+      );
+    }
   }
 
   private spawnDamageBurst(worldX: number, worldY: number, damage: number): void {

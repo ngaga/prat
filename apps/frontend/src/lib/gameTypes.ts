@@ -65,6 +65,14 @@ export interface PlayerState {
   isGhost?: boolean;
   /** Progress toward leaving ghost mode (0 .. GHOST_PRATS_TO_LEAVE). */
   ghostPratsCaptured?: number;
+  /** Server: player is locked to this stingray while within capture radius. */
+  attachedStingrayId?: string;
+  /** Server: salvo-based progress toward STINGRAY_ESCAPE_SALVO_COUNT while on this ray. */
+  stingrayEscapeSalvoHits?: number;
+  /** Server: last salvo id counted toward escape (one increment per salvo). */
+  stingrayEscapeLastCountedSalvoId?: string;
+  /** Server: until this timestamp (ms), proximity capture onto a stingray is skipped. */
+  stingrayReattachBlockedUntilTimestamp?: number;
 }
 
 export interface EnemyState {

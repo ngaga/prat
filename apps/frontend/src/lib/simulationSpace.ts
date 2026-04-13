@@ -28,3 +28,5 @@ export const CLICK_TARGET_RADIUS_SIMULATION_UNITS = 60;
 /** Stingray motion (server). */
 export const STINGRAY_SPEED_SIMULATION_UNITS_PER_SECOND = 80;
 export const STINGRAY_AMPLITUDE_SIMULATION_UNITS = 25;
+/** Server: boat is pulled onto a stingray when within this distance (simulation units). */
+export const STINGRAY_PLAYER_CAPTURE_RADIUS_SIMULATION_UNITS = 100;

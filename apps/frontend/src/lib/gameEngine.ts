@@ -85,6 +85,8 @@ const SALVO_LETTER_DELAY_MS = 80;
 const SHOOT_START_TOLERANCE = 120;
 const SHOOT_TIMESTAMP_SLACK_MS = 15_000;
 const TOWN_SHOOT_INTERVAL_MS = Math.floor(OCTOPUS_SHOOT_INTERVAL_MS / 2);
+const WILD_TOWN_SHOOT_INTERVAL_MS = Math.max(1, Math.floor(OCTOPUS_SHOOT_INTERVAL_MS / 10));
+const WILD_TOWN_SHOOT_RANGE_SIMULATION_UNITS = 300;
 const SHORT_RANGE_OSCILLATION_AMPLITUDE = 18;
 const SHORT_RANGE_OSCILLATION_FREQUENCY = 10;
 
@@ -675,13 +677,15 @@ export class GameRoom {
 
   private updateTowns(now: number): void {
     for (const town of this.towns.values()) {
-      if (!town.ownerId) continue;
-      if (now - town.lastShotTime < TOWN_SHOOT_INTERVAL_MS) continue;
+      const isWildTown = !town.ownerId;
+      const townShootInterval = isWildTown ? WILD_TOWN_SHOOT_INTERVAL_MS : TOWN_SHOOT_INTERVAL_MS;
+      const townShootRange = isWildTown ? WILD_TOWN_SHOOT_RANGE_SIMULATION_UNITS : OCTOPUS_PROJECTILE_MAX_RANGE;
+      if (now - town.lastShotTime < townShootInterval) continue;
 
       let bestTarget: PlayerState | null = null;
       let bestDist = Infinity;
       for (const [playerId, player] of this.players) {
-        if (playerId === town.ownerId) continue;
+        if (!isWildTown && playerId === town.ownerId) continue;
         if (player.isGhost) continue;
         const d = distance(town.x, town.y, player.x, player.y);
         if (d < bestDist) {
@@ -690,7 +694,7 @@ export class GameRoom {
         }
       }
       if (!bestTarget) continue;
-      if (bestDist > OCTOPUS_PROJECTILE_MAX_RANGE) continue;
+      if (bestDist > townShootRange) continue;
       town.lastShotTime = now;
       this.spawnTownShotAtPlayer(town, bestTarget, now);
     }

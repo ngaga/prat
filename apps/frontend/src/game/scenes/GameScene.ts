@@ -293,6 +293,9 @@ export class GameScene extends Phaser.Scene {
   private mobileJoystickMaxThumbOffsetPixels = 100;
   private mobileJoystickDeadZonePixels = 16;
   private readonly mobileJoystickMoveLeadDistancePixels = 200;
+  /** Closer world view on touch-only layout (desktop zoom is unchanged). */
+  private readonly mobileCameraZoomMultiplier = 3.75;
+  private readonly mobileCameraZoomUpperCap = 6.5;
   private readonly mobileJoystickWorldScratch = new Phaser.Math.Vector2();
   /** Short-lived; kept so we can pin it to the viewport while the camera moves. */
   private mobileTutorialHudText: Phaser.GameObjects.Text | null = null;
@@ -494,6 +497,10 @@ export class GameScene extends Phaser.Scene {
     this.createLifeAndExperienceBars();
 
     this.updateMultiplayerStatus();
+
+    if (this.mobileControlsEnabled) {
+      this.time.delayedCall(400, () => this.showMobileControlsTutorial());
+    }
 
     EventBus.emit("current-scene-ready", this);
   }
@@ -1185,6 +1192,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   update(): void {
+    if (this.mobileControlsEnabled) {
+      this.syncMobileJoystickWorldLayout();
+      this.syncMobileTutorialHudWorldLayout();
+    }
     if (!this.boat || !this.boatNameLabel || !this.lifeBar || !this.experienceBar) return;
     const localNameFontPx = boatNameFontSizePxForScale(this.boat.scaleX);
     this.boatNameLabel.setStyle({ fontSize: `${localNameFontPx}px` });
@@ -1239,20 +1250,24 @@ export class GameScene extends Phaser.Scene {
 
     this.checkPratCapture();
     this.smoothRemoteBoatSpritesTowardAuthoritativeState();
-    this.syncMobileJoystickWorldLayout();
-    this.syncMobileTutorialHudWorldLayout();
   }
 
   private updateCameraZoom(): void {
     const camera = this.cameras.main;
     const zoomX = camera.width / VIEW_WIDTH;
     const zoomY = camera.height / VIEW_HEIGHT;
-    camera.setZoom(Math.min(zoomX, zoomY));
+    let zoom = Math.min(zoomX, zoomY);
+    if (this.mobileControlsEnabled) {
+      zoom = Math.min(zoom * this.mobileCameraZoomMultiplier, this.mobileCameraZoomUpperCap);
+    }
+    camera.setZoom(zoom);
     this.layoutMobileJoystick();
   }
 
   private setupMobileControls(): void {
     this.mobileControlsEnabled = true;
+    // Default is a single Pointer; extra touches reuse id 0 and block move + shoot together.
+    this.input.addPointer(8);
     this.layoutMobileJoystick();
     const baseRadius = this.mobileJoystickBaseRadiusPixels;
     const thumbRadius = this.mobileJoystickThumbRadiusPixels;
@@ -1270,19 +1285,18 @@ export class GameScene extends Phaser.Scene {
     this.input.on("pointerdown", this.onMobilePointerDown, this);
     this.input.on("pointermove", this.onMobilePointerMove, this);
     this.input.on("pointerup", this.onMobilePointerUp, this);
-    this.showMobileControlsTutorial();
   }
 
   private layoutMobileJoystick(): void {
     if (!this.mobileControlsEnabled) return;
     const shortSide = Math.min(this.scale.width, this.scale.height);
     this.mobileJoystickBaseRadiusPixels = Phaser.Math.Clamp(
-      Math.round(shortSide * 0.15),
-      104,
-      182
+      Math.round(shortSide * 0.48),
+      280,
+      520
     );
     this.mobileJoystickThumbRadiusPixels = Math.max(
-      46,
+      120,
       Math.round(this.mobileJoystickBaseRadiusPixels * 0.42)
     );
     this.mobileJoystickMaxThumbOffsetPixels = this.mobileJoystickBaseRadiusPixels;
@@ -1291,8 +1305,8 @@ export class GameScene extends Phaser.Scene {
       Math.round(this.mobileJoystickBaseRadiusPixels * 0.14)
     );
     const edgeInset = Math.max(
-      40,
-      Math.round(this.mobileJoystickBaseRadiusPixels * 1.34)
+      52,
+      Math.round(this.mobileJoystickBaseRadiusPixels * 1.22)
     );
     this.mobileJoystickCenterScreenX = edgeInset;
     this.mobileJoystickCenterScreenY = this.scale.height - edgeInset;
@@ -1351,6 +1365,9 @@ export class GameScene extends Phaser.Scene {
       this.recordSessionAction();
       this.mobileJoystickPointerId = pointer.id;
     } else if (pointer.id !== this.mobileJoystickPointerId) {
+      if (distanceToJoystick < grabRadius && this.mobileJoystickPointerId !== undefined) {
+        return;
+      }
       const worldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
       this.handleLeftClick(worldPoint.x, worldPoint.y);
       this.showMobileFireFeedback(worldPoint.x, worldPoint.y);
@@ -1417,17 +1434,17 @@ export class GameScene extends Phaser.Scene {
     if (!this.isSceneActive) return;
     try {
       const tutorialText = this.add
-        .text(0, 0, "Joystick: move   Tap elsewhere: shoot", {
-          fontSize: "20px",
+        .text(0, 0, "Joystick: one finger   Other finger: shoot (both at once)", {
+          fontSize: "26px",
           color: "#1f2d3d",
           backgroundColor: "rgba(255,255,255,0.82)",
-          padding: { x: 12, y: 6 },
+          padding: { x: 14, y: 8 },
         })
         .setOrigin(0.5)
-        .setDepth(2000);
+        .setDepth(12000);
       this.mobileTutorialHudText = tutorialText;
       this.syncMobileTutorialHudWorldLayout();
-      this.time.delayedCall(5000, () => {
+      this.time.delayedCall(9000, () => {
         if (!this.isSceneActive || !tutorialText.active) return;
         this.tweens.add({
           targets: tutorialText,

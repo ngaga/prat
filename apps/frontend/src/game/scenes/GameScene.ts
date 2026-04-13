@@ -168,6 +168,12 @@ function formatPratsHudLabel(prats: number): string {
   return `Prats: ${prats}`;
 }
 
+/** True when a mouse or trackpad is present; touchscreen PCs then keep click / right-click instead of the joystick. */
+function browserReportsAnyFinePointingDevice(): boolean {
+  if (typeof globalThis.matchMedia !== "function") return true;
+  return globalThis.matchMedia("(any-pointer: fine)").matches;
+}
+
 function normalizeDirection(
   fromX: number,
   fromY: number,
@@ -271,6 +277,22 @@ export class GameScene extends Phaser.Scene {
   };
   private sessionActionsCount = 0;
   private sessionPageHideHandler: (() => void) | null = null;
+  /** Touch-first layout: virtual joystick plus tap-to-shoot elsewhere. */
+  private mobileControlsEnabled = false;
+  private mobileJoystickBase: Phaser.GameObjects.Arc | null = null;
+  private mobileJoystickThumb: Phaser.GameObjects.Arc | null = null;
+  private mobileJoystickPointerId: number | undefined;
+  private mobileJoystickCenterScreenX = 100;
+  private mobileJoystickCenterScreenY = 100;
+  private mobileJoystickThumbOffsetScreenX = 0;
+  private mobileJoystickThumbOffsetScreenY = 0;
+  private readonly mobileJoystickBaseRadiusPixels = 60;
+  private readonly mobileJoystickThumbRadiusPixels = 26;
+  private readonly mobileJoystickGrabMarginMultiplier = 1.5;
+  private readonly mobileJoystickMaxThumbOffsetPixels = 60;
+  private readonly mobileJoystickDeadZonePixels = 10;
+  private readonly mobileJoystickMoveLeadDistancePixels = 200;
+  private readonly mobileJoystickEdgeMarginPixels = 100;
 
   constructor() {
     super({ key: "GameScene" });
@@ -289,8 +311,15 @@ export class GameScene extends Phaser.Scene {
     this.sea.setOrigin(0.5);
 
     this.createWorldBorders();
-    this.input.on("pointerdown", this.onPointerDown, this);
-    this.input.on("pointermove", this.onPointerMove, this);
+    // Phaser only exposes touch, not mouse; use CSS so hybrid devices keep desktop controls.
+    const useMobileControls =
+      this.sys.game.device.input.touch && !browserReportsAnyFinePointingDevice();
+    if (useMobileControls) {
+      this.setupMobileControls();
+    } else {
+      this.input.on("pointerdown", this.onPointerDown, this);
+      this.input.on("pointermove", this.onPointerMove, this);
+    }
     this.game.canvas.addEventListener("contextmenu", (event) => event.preventDefault());
 
     this.multiplayer = new MultiplayerManager({
@@ -612,8 +641,19 @@ export class GameScene extends Phaser.Scene {
     this.endGameSessionRecord(false);
     stopBackgroundMusic(this.registry);
     this.savePlayer();
-    this.input.off("pointerdown", this.onPointerDown, this);
-    this.input.off("pointermove", this.onPointerMove, this);
+    if (this.mobileControlsEnabled) {
+      this.input.off("pointerdown", this.onMobilePointerDown, this);
+      this.input.off("pointermove", this.onMobilePointerMove, this);
+      this.input.off("pointerup", this.onMobilePointerUp, this);
+      this.mobileJoystickBase?.destroy();
+      this.mobileJoystickThumb?.destroy();
+      this.mobileJoystickBase = null;
+      this.mobileJoystickThumb = null;
+      this.mobileJoystickPointerId = undefined;
+    } else {
+      this.input.off("pointerdown", this.onPointerDown, this);
+      this.input.off("pointermove", this.onPointerMove, this);
+    }
     this.scale.off("resize", this.updateCameraZoom, this);
     for (const text of this.serverProjectileSprites.values()) {
       text.destroy();
@@ -1201,6 +1241,150 @@ export class GameScene extends Phaser.Scene {
     const zoomX = camera.width / VIEW_WIDTH;
     const zoomY = camera.height / VIEW_HEIGHT;
     camera.setZoom(Math.min(zoomX, zoomY));
+    this.layoutMobileJoystick();
+  }
+
+  private setupMobileControls(): void {
+    this.mobileControlsEnabled = true;
+    const baseRadius = this.mobileJoystickBaseRadiusPixels;
+    const thumbRadius = this.mobileJoystickThumbRadiusPixels;
+    this.layoutMobileJoystick();
+    const centerX = this.mobileJoystickCenterScreenX;
+    const centerY = this.mobileJoystickCenterScreenY;
+    this.mobileJoystickBase = this.add
+      .circle(centerX, centerY, baseRadius, 0x333333, 0.3)
+      .setScrollFactor(0)
+      .setDepth(1000);
+    this.mobileJoystickThumb = this.add
+      .circle(centerX, centerY, thumbRadius, 0x666666, 0.7)
+      .setScrollFactor(0)
+      .setDepth(1001);
+    this.input.on("pointerdown", this.onMobilePointerDown, this);
+    this.input.on("pointermove", this.onMobilePointerMove, this);
+    this.input.on("pointerup", this.onMobilePointerUp, this);
+    this.showMobileControlsTutorial();
+  }
+
+  private layoutMobileJoystick(): void {
+    if (!this.mobileControlsEnabled) return;
+    const margin = this.mobileJoystickEdgeMarginPixels;
+    this.mobileJoystickCenterScreenX = margin;
+    this.mobileJoystickCenterScreenY = this.scale.height - margin;
+    const centerX = this.mobileJoystickCenterScreenX;
+    const centerY = this.mobileJoystickCenterScreenY;
+    this.mobileJoystickBase?.setPosition(centerX, centerY);
+    this.mobileJoystickThumb?.setPosition(
+      centerX + this.mobileJoystickThumbOffsetScreenX,
+      centerY + this.mobileJoystickThumbOffsetScreenY
+    );
+  }
+
+  private onMobilePointerDown(pointer: Phaser.Input.Pointer): void {
+    if (!this.mobileControlsEnabled || !this.boat) return;
+    const centerX = this.mobileJoystickCenterScreenX;
+    const centerY = this.mobileJoystickCenterScreenY;
+    const grabRadius = this.mobileJoystickBaseRadiusPixels * this.mobileJoystickGrabMarginMultiplier;
+    const distanceToJoystick = Phaser.Math.Distance.Between(pointer.x, pointer.y, centerX, centerY);
+
+    if (distanceToJoystick < grabRadius && this.mobileJoystickPointerId === undefined) {
+      this.recordSessionAction();
+      this.mobileJoystickPointerId = pointer.id;
+    } else if (pointer.id !== this.mobileJoystickPointerId) {
+      const worldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+      this.handleLeftClick(worldPoint.x, worldPoint.y);
+      this.showMobileFireFeedback(worldPoint.x, worldPoint.y);
+    }
+  }
+
+  private onMobilePointerMove(pointer: Phaser.Input.Pointer): void {
+    if (!this.mobileControlsEnabled || !this.boat) return;
+    if (pointer.id !== this.mobileJoystickPointerId) return;
+
+    const centerX = this.mobileJoystickCenterScreenX;
+    const centerY = this.mobileJoystickCenterScreenY;
+    const maxOffset = this.mobileJoystickMaxThumbOffsetPixels;
+    const distance = Phaser.Math.Distance.Between(centerX, centerY, pointer.x, pointer.y);
+    const angle = Phaser.Math.Angle.Between(centerX, centerY, pointer.x, pointer.y);
+    const clampedDistance = Math.min(distance, maxOffset);
+
+    const thumbX = centerX + Math.cos(angle) * clampedDistance;
+    const thumbY = centerY + Math.sin(angle) * clampedDistance;
+    this.mobileJoystickThumbOffsetScreenX = thumbX - centerX;
+    this.mobileJoystickThumbOffsetScreenY = thumbY - centerY;
+    this.mobileJoystickThumb?.setPosition(thumbX, thumbY);
+
+    if (clampedDistance > this.mobileJoystickDeadZonePixels) {
+      const lead = this.mobileJoystickMoveLeadDistancePixels;
+      this.moveTargetX = this.clampToWorldBounds(this.boat.x + Math.cos(angle) * lead);
+      this.moveTargetY = this.clampToWorldBounds(this.boat.y + Math.sin(angle) * lead);
+    } else {
+      this.moveTargetX = this.clampToWorldBounds(this.boat.x);
+      this.moveTargetY = this.clampToWorldBounds(this.boat.y);
+    }
+  }
+
+  private onMobilePointerUp(pointer: Phaser.Input.Pointer): void {
+    if (!this.mobileControlsEnabled || !this.boat) return;
+    if (pointer.id !== this.mobileJoystickPointerId) return;
+    this.mobileJoystickPointerId = undefined;
+    this.mobileJoystickThumbOffsetScreenX = 0;
+    this.mobileJoystickThumbOffsetScreenY = 0;
+    const centerX = this.mobileJoystickCenterScreenX;
+    const centerY = this.mobileJoystickCenterScreenY;
+    this.mobileJoystickThumb?.setPosition(centerX, centerY);
+    this.moveTargetX = this.clampToWorldBounds(this.boat.x);
+    this.moveTargetY = this.clampToWorldBounds(this.boat.y);
+  }
+
+  private showMobileFireFeedback(worldX: number, worldY: number): void {
+    if (!this.isSceneActive) return;
+    try {
+      const circle = this.add.circle(worldX, worldY, 10, 0xff4444, 0.45);
+      circle.setDepth(14);
+      this.tweens.add({
+        targets: circle,
+        alpha: 0,
+        scale: 2,
+        duration: 280,
+        ease: "Sine.easeOut",
+        onComplete: () => circle.destroy(),
+      });
+    } catch {
+      // Scene tearing down
+    }
+  }
+
+  private showMobileControlsTutorial(): void {
+    if (!this.isSceneActive) return;
+    try {
+      const tutorialText = this.add
+        .text(
+          this.scale.width / 2,
+          52,
+          "Joystick: move   Tap elsewhere: shoot",
+          {
+            fontSize: "16px",
+            color: "#1f2d3d",
+            backgroundColor: "rgba(255,255,255,0.82)",
+            padding: { x: 12, y: 6 },
+          }
+        )
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setDepth(2000);
+      this.time.delayedCall(5000, () => {
+        if (!this.isSceneActive || !tutorialText.active) return;
+        this.tweens.add({
+          targets: tutorialText,
+          alpha: 0,
+          duration: 900,
+          ease: "Sine.easeInOut",
+          onComplete: () => tutorialText.destroy(),
+        });
+      });
+    } catch {
+      // Scene tearing down
+    }
   }
 
   private applyServerGameState(state: SerializableGameState): void {

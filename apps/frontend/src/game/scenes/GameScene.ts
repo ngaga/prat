@@ -287,11 +287,11 @@ export class GameScene extends Phaser.Scene {
   private mobileJoystickThumbOffsetScreenX = 0;
   private mobileJoystickThumbOffsetScreenY = 0;
   /** Sized from viewport in layoutMobileJoystick; grab / move logic uses these. */
-  private mobileJoystickBaseRadiusPixels = 50;
-  private mobileJoystickThumbRadiusPixels = 22;
+  private mobileJoystickBaseRadiusPixels = 35;
+  private mobileJoystickThumbRadiusPixels = 15;
   private readonly mobileJoystickGrabMarginMultiplier = 1.55;
-  private mobileJoystickMaxThumbOffsetPixels = 50;
-  private mobileJoystickDeadZonePixels = 8;
+  private mobileJoystickMaxThumbOffsetPixels = 35;
+  private mobileJoystickDeadZonePixels = 6;
   private readonly mobileJoystickMoveLeadDistancePixels = 200;
   /** Closer world view on touch-only layout (desktop zoom is unchanged). ~2x fit was requested; cap avoids extreme crop on tall phones. */
   private readonly mobileCameraZoomMultiplier = 2;
@@ -1274,12 +1274,12 @@ export class GameScene extends Phaser.Scene {
     const baseStrokeWidth = Math.max(4, Math.round(baseRadius * 0.065));
     // World positions are set each frame via syncMobileJoystickWorldLayout (camera follows the boat).
     this.mobileJoystickBase = this.add
-      .circle(0, 0, baseRadius, 0x5c5c5c, 0.55)
-      .setStrokeStyle(baseStrokeWidth, 0x2a2a2a, 0.78)
+      .circle(0, 0, baseRadius, 0x5c5c5c, 0.275)
+      .setStrokeStyle(baseStrokeWidth, 0x2a2a2a, 0.39)
       .setDepth(1000);
     this.mobileJoystickThumb = this.add
-      .circle(0, 0, thumbRadius, 0x9e9e9e, 0.9)
-      .setStrokeStyle(Math.max(2, Math.round(thumbRadius * 0.12)), 0x4a4a4a, 0.55)
+      .circle(0, 0, thumbRadius, 0x9e9e9e, 0.45)
+      .setStrokeStyle(Math.max(2, Math.round(thumbRadius * 0.12)), 0x4a4a4a, 0.275)
       .setDepth(1001);
     this.layoutMobileJoystick();
     this.input.on("pointerdown", this.onMobilePointerDown, this);
@@ -1291,21 +1291,21 @@ export class GameScene extends Phaser.Scene {
     if (!this.mobileControlsEnabled) return;
     const shortSide = Math.min(this.scale.width, this.scale.height);
     this.mobileJoystickBaseRadiusPixels = Phaser.Math.Clamp(
-      Math.round(shortSide * 0.24),
-      140,
-      260
+      Math.round(shortSide * 0.168),
+      98,
+      182
     );
     this.mobileJoystickThumbRadiusPixels = Math.max(
-      60,
+      42,
       Math.round(this.mobileJoystickBaseRadiusPixels * 0.42)
     );
     this.mobileJoystickMaxThumbOffsetPixels = this.mobileJoystickBaseRadiusPixels;
     this.mobileJoystickDeadZonePixels = Math.max(
-      8,
+      6,
       Math.round(this.mobileJoystickBaseRadiusPixels * 0.14)
     );
     const edgeInset = Math.max(
-      26,
+      18,
       Math.round(this.mobileJoystickBaseRadiusPixels * 1.22)
     );
     this.mobileJoystickCenterScreenX = edgeInset;
@@ -1331,8 +1331,9 @@ export class GameScene extends Phaser.Scene {
     );
     this.mobileJoystickBase.setPosition(scratch.x, scratch.y);
     this.mobileJoystickBase.setRadius(this.mobileJoystickBaseRadiusPixels / zoom);
+    this.mobileJoystickBase.setFillStyle(0x5c5c5c, 0.275);
     const baseStrokeScreen = Math.max(4, Math.round(this.mobileJoystickBaseRadiusPixels * 0.065));
-    this.mobileJoystickBase.setStrokeStyle(Math.max(1, baseStrokeScreen / zoom), 0x2a2a2a, 0.78);
+    this.mobileJoystickBase.setStrokeStyle(Math.max(1, baseStrokeScreen / zoom), 0x2a2a2a, 0.39);
     this.mobileJoystickBase.setScale(1, 1);
 
     camera.getWorldPoint(
@@ -1342,8 +1343,9 @@ export class GameScene extends Phaser.Scene {
     );
     this.mobileJoystickThumb.setPosition(scratch.x, scratch.y);
     this.mobileJoystickThumb.setRadius(this.mobileJoystickThumbRadiusPixels / zoom);
+    this.mobileJoystickThumb.setFillStyle(0x9e9e9e, 0.45);
     const thumbStrokeScreen = Math.max(2, Math.round(this.mobileJoystickThumbRadiusPixels * 0.12));
-    this.mobileJoystickThumb.setStrokeStyle(Math.max(1, thumbStrokeScreen / zoom), 0x4a4a4a, 0.55);
+    this.mobileJoystickThumb.setStrokeStyle(Math.max(1, thumbStrokeScreen / zoom), 0x4a4a4a, 0.275);
     this.mobileJoystickThumb.setScale(1, 1);
   }
 

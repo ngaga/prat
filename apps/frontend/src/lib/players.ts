@@ -22,6 +22,7 @@ export interface Player {
   kills_octopus: number;
   kills_stingray: number;
   prats_captured?: number;
+  prats?: number;
   is_ghost?: boolean;
   ghost_prats_captured?: number;
 }
@@ -50,6 +51,7 @@ export async function upsertPlayer(player: {
   kills_octopus?: number;
   kills_stingray?: number;
   prats_captured?: number;
+  prats?: number;
   is_ghost?: boolean;
   ghost_prats_captured?: number;
 }): Promise<boolean> {
@@ -68,6 +70,7 @@ export async function upsertPlayer(player: {
         kills_octopus: player.kills_octopus ?? 0,
         kills_stingray: player.kills_stingray ?? 0,
         prats_captured: player.prats_captured ?? 0,
+        prats: player.prats ?? 0,
         is_ghost: player.is_ghost ?? false,
         ghost_prats_captured: player.ghost_prats_captured ?? 0,
       }),

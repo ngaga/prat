@@ -23,6 +23,8 @@ export const HEAL_PERCENT_OF_MAX = 0.1;
 export const TOWN_COUNT = 6;
 /** Salvos needed to capture a town from another owner (authoritative server). */
 export const TOWN_CAPTURE_SALVOS_REQUIRED = 10;
+/** Projectile interception radius around a town center to progress capture. Simulation units. */
+export const TOWN_CAPTURE_INTERCEPT_RADIUS = 120;
 
 /** Damage per letter from octopus salvos (authoritative server). */
 export const OCTOPUS_PROJECTILE_DAMAGE = 4;
@@ -33,6 +35,8 @@ export const OCTOPUS_PROJECTILE_MAX_RANGE = 500;
 
 /** Word prats captured while ghost to leave ghost mode and return to normal play. */
 export const GHOST_PRATS_TO_LEAVE = 10;
+/** Max travel distance for fallback close-range letters. Simulation units. */
+export const PLAYER_PROJECTILE_SHORT_RANGE = 120;
 
 export function getLevelFromExperience(totalExperience: number): number {
   const safe = Math.max(0, Math.floor(Number(totalExperience) || 0));

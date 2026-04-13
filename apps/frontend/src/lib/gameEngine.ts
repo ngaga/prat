@@ -8,10 +8,12 @@ import {
   OCTOPUS_PROJECTILE_DAMAGE,
   OCTOPUS_PROJECTILE_MAX_RANGE,
   OCTOPUS_PROJECTILE_SPEED_FACTOR,
+  PLAYER_PROJECTILE_SHORT_RANGE,
   PRAT_CAPTURE_CLIENT_SERVER_MAX_OFFSET,
   PRAT_CAPTURE_RADIUS,
   PRAT_SPAWN_INTERVAL_MS,
   PRAT_SPAWN_RADIUS,
+  TOWN_CAPTURE_INTERCEPT_RADIUS,
   TOWN_CAPTURE_SALVOS_REQUIRED,
   TOWN_COUNT,
   XP_PER_OCTOPUS_OR_STINGRAY,
@@ -20,6 +22,7 @@ import {
 } from "@/lib/gameBalance";
 import {
   LETTER_DAMAGE_SIMULATION_UNITS,
+  PLAYER_BOAT_DIAMETER_SIMULATION_UNITS,
   PLAYER_LETTER_SPEED_SIMULATION_UNITS_PER_SECOND,
   PLAYER_PROJECTILE_MAX_TRAVEL_SIMULATION_UNITS,
   PROJECTILE_HIT_RADIUS_SIMULATION_UNITS,
@@ -82,6 +85,8 @@ const SALVO_LETTER_DELAY_MS = 80;
 const SHOOT_START_TOLERANCE = 120;
 const SHOOT_TIMESTAMP_SLACK_MS = 15_000;
 const TOWN_SHOOT_INTERVAL_MS = Math.floor(OCTOPUS_SHOOT_INTERVAL_MS / 2);
+const SHORT_RANGE_OSCILLATION_AMPLITUDE = 18;
+const SHORT_RANGE_OSCILLATION_FREQUENCY = 10;
 
 function distance(ax: number, ay: number, bx: number, by: number): number {
   const dx = ax - bx;
@@ -134,7 +139,12 @@ interface ServerProjectile {
   damage: number;
   letter: string;
   salvoReleaseTime: number;
+  salvoId: string;
   maxRange: number;
+  isShortRange: boolean;
+  oscillationAmplitude: number;
+  oscillationFrequency: number;
+  oscillationPhase: number;
 }
 
 interface ServerTown {
@@ -223,7 +233,7 @@ export class GameRoom {
       killsOctopus: 0,
       killsStingray: 0,
       pratsCaptured: 0,
-      pratSalvos: 0,
+      prats: 0,
       color: playerIdToColor(playerId),
       isGhost: false,
       ghostPratsCaptured: 0,
@@ -407,6 +417,7 @@ export class GameRoom {
         killsOctopus: input.killsOctopus ?? previous.killsOctopus ?? 0,
         killsStingray: input.killsStingray ?? previous.killsStingray ?? 0,
         pratsCaptured: input.pratsCaptured ?? previous.pratsCaptured ?? 0,
+        prats: input.prats ?? previous.prats ?? 0,
         isGhost: nextIsGhost,
         ghostPratsCaptured: nextGhostPrats,
       });
@@ -482,7 +493,7 @@ export class GameRoom {
     }
     if (!prat.isHeal) {
       playerState.pratsCaptured = (playerState.pratsCaptured ?? 0) + 1;
-      playerState.pratSalvos = (playerState.pratSalvos ?? 0) + 1;
+      playerState.prats = (playerState.prats ?? 0) + 1;
     }
     playerState.x = captureX;
     playerState.y = captureY;
@@ -494,31 +505,15 @@ export class GameRoom {
     const townId = typeof input.townId === "string" ? input.townId : "";
     if (!townId) return;
     const playerState = this.players.get(playerId);
-    const town = this.towns.get(townId);
-    if (!playerState || !town) return;
+    if (!playerState || !this.towns.has(townId)) return;
     if (playerState.isGhost) return;
 
-    const available = playerState.pratSalvos ?? 0;
+    const available = playerState.prats ?? 0;
     if (available <= 0) return;
 
-    playerState.pratSalvos = available - 1;
+    playerState.prats = available - 1;
     this.players.set(playerId, playerState);
-
-    if (town.ownerId === playerId) {
-      return;
-    }
-
-    if (town.contenderId !== playerId) {
-      town.contenderId = playerId;
-      town.contenderSalvos = 0;
-    }
-    town.contenderSalvos += 1;
-    if (town.contenderSalvos >= TOWN_CAPTURE_SALVOS_REQUIRED) {
-      town.ownerId = playerId;
-      town.contenderId = null;
-      town.contenderSalvos = 0;
-    }
-    this.towns.set(townId, town);
+    this.applyTownCaptureProgress(playerId, townId);
   }
 
   private spawnTownShotAtPlayer(town: ServerTown, targetPlayer: PlayerState, now: number): void {
@@ -533,6 +528,7 @@ export class GameRoom {
 
     const shooterId = `town:${town.id}`;
     const speed = LETTER_SPEED_SIMULATION_UNITS_PER_SECOND * OCTOPUS_PROJECTILE_SPEED_FACTOR;
+    const salvoId = `salvo-${this.nextProjectileId}`;
 
     for (let letterIndex = 0; letterIndex < PRAT_LETTERS.length; letterIndex++) {
       const id = `proj-${this.nextProjectileId++}`;
@@ -549,7 +545,12 @@ export class GameRoom {
         damage: OCTOPUS_PROJECTILE_DAMAGE,
         letter: PRAT_LETTERS[letterIndex],
         salvoReleaseTime: now + letterIndex * SALVO_LETTER_DELAY_MS,
+        salvoId,
         maxRange: OCTOPUS_PROJECTILE_MAX_RANGE,
+        isShortRange: false,
+        oscillationAmplitude: 0,
+        oscillationFrequency: 0,
+        oscillationPhase: 0,
       });
     }
   }
@@ -566,6 +567,7 @@ export class GameRoom {
 
     const shooterId = octopusProjectileShooterId(enemy.id);
     const speed = LETTER_SPEED_SIMULATION_UNITS_PER_SECOND * OCTOPUS_PROJECTILE_SPEED_FACTOR;
+    const salvoId = `salvo-${this.nextProjectileId}`;
 
     for (let letterIndex = 0; letterIndex < PRAT_LETTERS.length; letterIndex++) {
       const id = `proj-${this.nextProjectileId++}`;
@@ -582,7 +584,12 @@ export class GameRoom {
         damage: OCTOPUS_PROJECTILE_DAMAGE,
         letter: PRAT_LETTERS[letterIndex],
         salvoReleaseTime: now + letterIndex * SALVO_LETTER_DELAY_MS,
+        salvoId,
         maxRange: OCTOPUS_PROJECTILE_MAX_RANGE,
+        isShortRange: false,
+        oscillationAmplitude: 0,
+        oscillationFrequency: 0,
+        oscillationPhase: 0,
       });
     }
   }
@@ -610,6 +617,16 @@ export class GameRoom {
     directionX /= length;
     directionY /= length;
 
+    const hasPrats = (shooter.prats ?? 0) > 0;
+    const targetDistance = distance(input.startX, input.startY, input.targetX, input.targetY);
+    const useShortRange = !hasPrats || targetDistance < PLAYER_BOAT_DIAMETER_SIMULATION_UNITS;
+    const projectileMaxRange = useShortRange ? PLAYER_PROJECTILE_SHORT_RANGE : PROJECTILE_MAX_RANGE;
+    if (!useShortRange) {
+      shooter.prats = (shooter.prats ?? 0) - 1;
+      this.players.set(playerId, shooter);
+    }
+    const salvoId = `salvo-${this.nextProjectileId}`;
+
     for (let letterIndex = 0; letterIndex < PRAT_LETTERS.length; letterIndex++) {
       const id = `proj-${this.nextProjectileId++}`;
       this.projectiles.set(id, {
@@ -625,7 +642,12 @@ export class GameRoom {
         damage: LETTER_DAMAGE,
         letter: PRAT_LETTERS[letterIndex],
         salvoReleaseTime: now + letterIndex * SALVO_LETTER_DELAY_MS,
-        maxRange: PROJECTILE_MAX_RANGE,
+        salvoId,
+        maxRange: projectileMaxRange,
+        isShortRange: useShortRange,
+        oscillationAmplitude: useShortRange ? SHORT_RANGE_OSCILLATION_AMPLITUDE : 0,
+        oscillationFrequency: useShortRange ? SHORT_RANGE_OSCILLATION_FREQUENCY : 0,
+        oscillationPhase: useShortRange ? Math.random() * Math.PI * 2 : 0,
       });
     }
   }
@@ -774,8 +796,20 @@ export class GameRoom {
     for (const [projectileId, projectile] of this.projectiles) {
       if (now < projectile.salvoReleaseTime) continue;
 
-      projectile.x += projectile.directionX * projectile.speed * deltaSeconds;
-      projectile.y += projectile.directionY * projectile.speed * deltaSeconds;
+      const forwardStep = projectile.speed * deltaSeconds;
+      projectile.x += projectile.directionX * forwardStep;
+      projectile.y += projectile.directionY * forwardStep;
+      if (projectile.oscillationAmplitude > 0 && projectile.oscillationFrequency > 0) {
+        const elapsedSeconds = Math.max(0, (now - projectile.salvoReleaseTime) / 1000);
+        const wave =
+          Math.sin(elapsedSeconds * projectile.oscillationFrequency + projectile.oscillationPhase) *
+          projectile.oscillationAmplitude *
+          deltaSeconds;
+        const perpendicularX = -projectile.directionY;
+        const perpendicularY = projectile.directionX;
+        projectile.x += perpendicularX * wave;
+        projectile.y += perpendicularY * wave;
+      }
 
       const traveled = distance(projectile.originX, projectile.originY, projectile.x, projectile.y);
       if (traveled > projectile.maxRange) {
@@ -785,6 +819,7 @@ export class GameRoom {
 
       if (this.tryProjectileHitEnemy(projectileId, projectile)) continue;
       if (this.tryProjectileHitStingray(projectileId, projectile)) continue;
+      if (this.tryProjectileHitTown(projectile)) continue;
       if (this.tryProjectileHitPlayer(projectileId, projectile)) continue;
     }
 
@@ -917,6 +952,50 @@ export class GameRoom {
     return false;
   }
 
+  private tryProjectileHitTown(projectile: ServerProjectile): boolean {
+    if (projectileIsFromOctopus(projectile) || projectile.shooterId.startsWith("town:")) {
+      return false;
+    }
+    const shooter = this.players.get(projectile.shooterId);
+    if (!shooter || shooter.isGhost) return false;
+    for (const town of this.towns.values()) {
+      if (distance(projectile.x, projectile.y, town.x, town.y) >= TOWN_CAPTURE_INTERCEPT_RADIUS) continue;
+      const didProgressCapture = this.applyTownCaptureProgress(projectile.shooterId, town.id);
+      if (!didProgressCapture) {
+        continue;
+      }
+      this.removeProjectilesFromSalvo(projectile.shooterId, projectile.salvoId);
+      return true;
+    }
+    return false;
+  }
+
+  private applyTownCaptureProgress(playerId: string, townId: string): boolean {
+    const town = this.towns.get(townId);
+    if (!town) return false;
+    if (town.ownerId === playerId) return false;
+    if (town.contenderId !== playerId) {
+      town.contenderId = playerId;
+      town.contenderSalvos = 0;
+    }
+    town.contenderSalvos += 1;
+    if (town.contenderSalvos >= TOWN_CAPTURE_SALVOS_REQUIRED) {
+      town.ownerId = playerId;
+      town.contenderId = null;
+      town.contenderSalvos = 0;
+    }
+    this.towns.set(townId, town);
+    return true;
+  }
+
+  private removeProjectilesFromSalvo(shooterId: string, salvoId: string): void {
+    for (const [existingId, existingProjectile] of this.projectiles) {
+      if (existingProjectile.shooterId === shooterId && existingProjectile.salvoId === salvoId) {
+        this.projectiles.delete(existingId);
+      }
+    }
+  }
+
   private spawnEnemy(now: number): void {
     const id = `octopus-${this.nextEnemyId++}`;
     const { x, y } = randomInWorld();
@@ -968,6 +1047,7 @@ export class GameRoom {
         y: projectile.y,
         directionX: projectile.directionX,
         directionY: projectile.directionY,
+        isShortRange: projectile.isShortRange,
       };
     }
     const pratsRecord: Record<string, PratState> = {};

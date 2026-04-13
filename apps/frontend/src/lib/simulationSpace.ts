@@ -11,6 +11,8 @@ export const WORLD_MARGIN_SIMULATION_UNITS = 50;
 export const PLAYER_LETTER_SPEED_SIMULATION_UNITS_PER_SECOND = 400;
 export const LETTER_DAMAGE_SIMULATION_UNITS = 10;
 export const PROJECTILE_HIT_RADIUS_SIMULATION_UNITS = 40;
+/** Approximate rendered boat diameter in simulation units (used for close-range combat rules). */
+export const PLAYER_BOAT_DIAMETER_SIMULATION_UNITS = 80;
 /**
  * Max travel distance for player-fired letters (half diagonal of a 1920x1080 reference viewport,
  * expressed in simulation units — not display pixels).

@@ -27,6 +27,8 @@ export interface PlayerInput {
   killsStingray?: number;
   /** With SYNC_PROFILE: lifetime prat captures from Supabase (server increments each normal capture). */
   pratsCaptured?: number;
+  /** With SYNC_PROFILE: persisted projectile resource restored on reconnect. */
+  prats?: number;
   /** With SYNC_PROFILE: restore ghost after reconnect (persisted in Supabase like exp). */
   isGhost?: boolean;
   ghostPratsCaptured?: number;
@@ -54,10 +56,10 @@ export interface PlayerState {
   /** Lifetime normal-mode prat captures (persisted via client upsert like kills). */
   pratsCaptured?: number;
   /**
-   * Spendable town resource: each TOWN_SEND_SALVO consumes 1.
+   * Spendable projectile resource ("Prats") used for full-range shots.
    * Server keeps it authoritative; client only displays and requests.
    */
-  pratSalvos?: number;
+  prats?: number;
   color?: number;
   /** Dead players respawn as ghosts until they capture enough word prats. */
   isGhost?: boolean;
@@ -111,6 +113,8 @@ export interface ProjectileState {
   y: number;
   directionX: number;
   directionY: number;
+  /** True for fallback close-range projectiles (smaller and wobblier). */
+  isShortRange?: boolean;
 }
 
 export interface EliminationEvent {

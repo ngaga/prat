@@ -7,6 +7,7 @@ import {
   GHOST_PRATS_TO_LEAVE,
   MAX_LIFE,
   PRAT_CAPTURE_RADIUS,
+  TOWN_CAPTURE_SALVOS_REQUIRED,
 } from "@/lib/gameBalance";
 import {
   CLICK_TARGET_RADIUS_SIMULATION_UNITS,
@@ -32,7 +33,7 @@ interface TownEntity {
   id: string;
   text: Phaser.GameObjects.Text;
   nameLabel: Phaser.GameObjects.Text;
-  pulse?: Phaser.GameObjects.Arc;
+  captureBar: Phaser.GameObjects.Graphics;
 }
 
 interface RemoteBoatData {
@@ -157,8 +158,8 @@ function shortId(uuid: string): string {
   return uuid.slice(0, 8);
 }
 
-function formatPratsHudLabel(pratsCaptured: number, pratSalvos: number): string {
-  return `Prats: ${pratsCaptured}  Salvos: ${pratSalvos}`;
+function formatPratsHudLabel(pratsCaptured: number, prats: number): string {
+  return `Captured: ${pratsCaptured}  Prats: ${prats}`;
 }
 
 function normalizeDirection(
@@ -185,7 +186,6 @@ export class GameScene extends Phaser.Scene {
   private townEntities = new Map<string, TownEntity>();
   /** Tracks town ownership across SSE frames so we can toast on local capture. */
   private townPreviousOwnerById = new Map<string, string | null>();
-  private hoveredTownId: string | null = null;
   private score: number = 0;
   private scoreText!: Phaser.GameObjects.Text;
   private readonly boatSpeed = simulationToPhaserPixels(PLAYER_BOAT_SPEED_SIMULATION_UNITS_PER_SECOND);
@@ -194,9 +194,6 @@ export class GameScene extends Phaser.Scene {
   private isSceneActive = true;
   private lifeBar!: Phaser.GameObjects.Graphics;
   private experienceBar!: Phaser.GameObjects.Graphics;
-  private conquestBar!: Phaser.GameObjects.Graphics;
-  /** Fraction of towns owned by the local player (0..1), from last authoritative towns sync. */
-  private cityConquestRatio = 0;
   private sea!: Phaser.GameObjects.TileSprite;
   private borderTop!: Phaser.GameObjects.TileSprite;
   private borderBottom!: Phaser.GameObjects.TileSprite;
@@ -209,8 +206,8 @@ export class GameScene extends Phaser.Scene {
   private killsStingray = 0;
   /** Lifetime normal-mode prat captures; mirrored from server and persisted like kills_octopus. */
   private pratsCaptured = 0;
-  /** Spendable resource used to send salvos to towns; authoritative on server. */
-  private pratSalvos = 0;
+  /** Spendable projectile resource for full-range shots; authoritative on server. */
+  private prats = 0;
   /** From authoritative game state `players`; includes the local client. */
   private connectedPlayerCount = 1;
   /** Below the Ko-fi button (top-right overlay); screen Y for fixed multiplayer label. */
@@ -330,6 +327,7 @@ export class GameScene extends Phaser.Scene {
         this.killsOctopus = existingPlayer.kills_octopus;
         this.killsStingray = existingPlayer.kills_stingray;
         this.pratsCaptured = existingPlayer.prats_captured ?? 0;
+        this.prats = existingPlayer.prats ?? 0;
         this.localIsGhost = existingPlayer.is_ghost ?? false;
         this.syncedGhostPratsCaptured = existingPlayer.ghost_prats_captured ?? 0;
       } else {
@@ -340,6 +338,7 @@ export class GameScene extends Phaser.Scene {
           kills_octopus: 0,
           kills_stingray: 0,
           prats_captured: 0,
+          prats: 0,
           is_ghost: false,
           ghost_prats_captured: 0,
         });
@@ -391,6 +390,7 @@ export class GameScene extends Phaser.Scene {
         killsOctopus: this.killsOctopus,
         killsStingray: this.killsStingray,
         pratsCaptured: this.pratsCaptured,
+        prats: this.prats,
         ...(ghostRestoreFromDb ? ghostRestoreFromDb : {}),
       });
     } catch {
@@ -475,22 +475,14 @@ export class GameScene extends Phaser.Scene {
     const barWidth = 200;
     const barHeight = 14;
     const labelX = 20;
-    const conquestY = this.scale.height - 75;
     const lifeY = this.scale.height - 55;
     const experienceY = this.scale.height - 35;
-
-    this.conquestBar = this.add.graphics().setScrollFactor(0);
-    this.drawBar(this.conquestBar, BAR_X, conquestY, barWidth, barHeight, 0x333333, 0x00ff00, 0);
 
     this.lifeBar = this.add.graphics().setScrollFactor(0);
 
     this.experienceBar = this.add.graphics().setScrollFactor(0);
     this.drawBar(this.experienceBar, BAR_X, experienceY, barWidth, barHeight, 0x333333, 0x9b59b6, 0);
 
-    this.add
-      .text(labelX, conquestY + barHeight / 2, "Conquest", { fontSize: "12px", color: "#000" })
-      .setOrigin(0, 0.5)
-      .setScrollFactor(0);
     this.add
       .text(labelX, lifeY + barHeight / 2, "PV", { fontSize: "12px", color: "#000" })
       .setOrigin(0, 0.5)
@@ -499,11 +491,6 @@ export class GameScene extends Phaser.Scene {
       .text(labelX, experienceY + barHeight / 2, "Exp.", { fontSize: "12px", color: "#000" })
       .setOrigin(0, 0.5)
       .setScrollFactor(0);
-    this.add
-      .text(BAR_X + barWidth + 10, conquestY + barHeight / 2, "0%", { fontSize: "12px", color: "#000" })
-      .setOrigin(0, 0.5)
-      .setScrollFactor(0)
-      .setName("conquest-percent-text");
     this.add
       .text(BAR_X + barWidth + 10, experienceY + barHeight / 2, `Niv. ${this.level}`, { fontSize: "12px", color: "#000" })
       .setOrigin(0, 0.5)
@@ -557,6 +544,7 @@ export class GameScene extends Phaser.Scene {
       kills_octopus: this.killsOctopus,
       kills_stingray: this.killsStingray,
       prats_captured: this.pratsCaptured,
+      prats: this.prats,
       is_ghost: this.localIsGhost,
       ghost_prats_captured: this.syncedGhostPratsCaptured,
     });
@@ -625,7 +613,7 @@ export class GameScene extends Phaser.Scene {
     for (const entity of this.townEntities.values()) {
       entity.text.destroy();
       entity.nameLabel.destroy();
-      entity.pulse?.destroy();
+      entity.captureBar.destroy();
     }
     this.townEntities.clear();
     this.townPreviousOwnerById.clear();
@@ -1026,29 +1014,11 @@ export class GameScene extends Phaser.Scene {
 
   private onPointerMove(pointer: Phaser.Input.Pointer): void {
     const worldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
-    const hoverTownId = this.findTownAtWorldPoint(worldPoint.x, worldPoint.y);
-    if (hoverTownId !== this.hoveredTownId) {
-      this.hoveredTownId = hoverTownId;
-      this.input.setDefaultCursor(this.hoveredTownId ? "crosshair" : "default");
-    }
-  }
-
-  private findTownAtWorldPoint(worldX: number, worldY: number): string | null {
-    const radius = 44;
-    for (const [townId, town] of this.townEntities) {
-      const d = Phaser.Math.Distance.Between(worldX, worldY, town.text.x, town.text.y);
-      if (d <= radius) return townId;
-    }
-    return null;
+    this.input.setDefaultCursor("crosshair");
   }
 
   private handleLeftClick(worldX: number, worldY: number): void {
     if (this.localIsGhost) return;
-    const townId = this.findTownAtWorldPoint(worldX, worldY);
-    if (townId) {
-      this.sendTownSalvo(townId);
-      return;
-    }
     const clickRadius = CLICK_TARGET_RADIUS;
     for (const [playerId, boatData] of this.remoteBoats) {
       const distance = Phaser.Math.Distance.Between(worldX, worldY, boatData.sprite.x, boatData.sprite.y);
@@ -1076,48 +1046,6 @@ export class GameScene extends Phaser.Scene {
       }
     }
     this.fireLettersAtPosition(worldX, worldY);
-  }
-
-  private sendTownSalvo(townId: string): void {
-    if (this.pratSalvos <= 0) {
-      this.spawnEphemeralHudMessage("Not enough salvos.");
-      return;
-    }
-    const entity = this.townEntities.get(townId);
-    if (!entity) return;
-    // Same PRAT letter salvo as normal shooting (authoritative projectiles on server).
-    this.fireLettersAtPosition(entity.text.x, entity.text.y);
-    void this.multiplayer.sendGameInput({
-      type: "TOWN_SEND_SALVO",
-      timestamp: Date.now(),
-      townId,
-    });
-    this.spawnTownPulse(townId);
-  }
-
-  private spawnTownPulse(townId: string): void {
-    if (!this.isSceneActive) return;
-    const entity = this.townEntities.get(townId);
-    if (!entity) return;
-    try {
-      entity.pulse?.destroy();
-      const pulse = this.add.circle(entity.text.x, entity.text.y, 46, 0xf5c6dc, 0.28);
-      pulse.setDepth(8);
-      entity.pulse = pulse;
-      this.tweens.add({
-        targets: pulse,
-        alpha: 0,
-        scale: 1.8,
-        duration: 420,
-        ease: "Sine.easeOut",
-        onComplete: () => {
-          pulse.destroy();
-          if (entity.pulse === pulse) entity.pulse = undefined;
-        },
-      });
-    } catch {
-      // Scene tearing down
-    }
   }
 
   private spawnEphemeralHudMessage(message: string): void {
@@ -1185,7 +1113,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   update(): void {
-    if (!this.boat || !this.boatNameLabel || !this.lifeBar || !this.experienceBar || !this.conquestBar) return;
+    if (!this.boat || !this.boatNameLabel || !this.lifeBar || !this.experienceBar) return;
     const localNameFontPx = boatNameFontSizePxForScale(this.boat.scaleX);
     this.boatNameLabel.setStyle({ fontSize: `${localNameFontPx}px` });
     this.boatNameLabel.setPosition(
@@ -1198,24 +1126,8 @@ export class GameScene extends Phaser.Scene {
 
     const barWidth = 200;
     const barHeight = 14;
-    const conquestY = this.scale.height - 75;
     const lifeY = this.scale.height - 55;
     const experienceY = this.scale.height - 35;
-    this.drawBar(
-      this.conquestBar,
-      BAR_X,
-      conquestY,
-      barWidth,
-      barHeight,
-      0x333333,
-      0x00ff00,
-      this.cityConquestRatio
-    );
-    const conquestPercentText = this.children.getByName("conquest-percent-text") as Phaser.GameObjects.Text;
-    if (conquestPercentText) {
-      conquestPercentText.setText(`${Math.round(this.cityConquestRatio * 100)}%`);
-      conquestPercentText.setPosition(BAR_X + barWidth + 10, conquestY + barHeight / 2);
-    }
     this.drawBar(this.lifeBar, BAR_X, lifeY, barWidth, barHeight, 0x333333, 0x00ff00, this.life / MAX_LIFE);
     const { current: experienceInCurrentLevel, needed: experienceNeededForNextLevel } =
       getExperienceProgressTowardNextLevel(this.experience);
@@ -1325,8 +1237,8 @@ export class GameScene extends Phaser.Scene {
       this.killsOctopus = me.killsOctopus ?? 0;
       this.killsStingray = me.killsStingray ?? 0;
       this.pratsCaptured = me.pratsCaptured ?? 0;
-      this.pratSalvos = me.pratSalvos ?? 0;
-      this.scoreText.setText(formatPratsHudLabel(this.pratsCaptured, this.pratSalvos));
+      this.prats = me.prats ?? 0;
+      this.scoreText.setText(formatPratsHudLabel(this.pratsCaptured, this.prats));
       this.localIsGhost = me.isGhost ?? false;
       this.syncedGhostPratsCaptured = me.ghostPratsCaptured ?? 0;
 
@@ -1465,16 +1377,12 @@ export class GameScene extends Phaser.Scene {
           const entity = this.townEntities.get(id);
           entity?.text.destroy();
           entity?.nameLabel.destroy();
-          entity?.pulse?.destroy();
+          entity?.captureBar.destroy();
           this.townEntities.delete(id);
           this.townPreviousOwnerById.delete(id);
         }
       }
 
-      const townList = Object.values(townsRecord);
-      const totalTowns = townList.length;
-      const ownedByLocal = townList.filter((t) => t.ownerId === localPlayerId).length;
-      this.cityConquestRatio = totalTowns > 0 ? ownedByLocal / totalTowns : 0;
     } catch {
       // Scene may be destroyed during apply
     }
@@ -1519,15 +1427,18 @@ export class GameScene extends Phaser.Scene {
       nameLabel.setOrigin(0.5, 1);
       nameLabel.setDepth(10);
 
-      entity = { id, text, nameLabel };
+      const captureBar = this.add.graphics();
+      captureBar.setDepth(10);
+
+      entity = { id, text, nameLabel, captureBar };
       this.townEntities.set(id, entity);
-      this.applyTownVisualState(entity, px, py, color, glowColor, isNeutral, ownerDisplayName, nameLabelY);
+      this.applyTownVisualState(entity, px, py, color, glowColor, isNeutral, ownerDisplayName, nameLabelY, town);
       return;
     }
 
     entity.text.setPosition(px, py);
     entity.nameLabel.setPosition(px, nameLabelY);
-    this.applyTownVisualState(entity, px, py, color, glowColor, isNeutral, ownerDisplayName, nameLabelY);
+    this.applyTownVisualState(entity, px, py, color, glowColor, isNeutral, ownerDisplayName, nameLabelY, town);
   }
 
   private applyTownVisualState(
@@ -1538,7 +1449,8 @@ export class GameScene extends Phaser.Scene {
     glowColor: string,
     isNeutral: boolean,
     ownerDisplayName: string,
-    nameLabelY: number
+    nameLabelY: number,
+    town: TownState
   ): void {
     this.tweens.killTweensOf(entity.text);
     entity.text.setPosition(px, py);
@@ -1550,6 +1462,7 @@ export class GameScene extends Phaser.Scene {
       entity.text.setShadow(0, 0, "#000000", 0, false, false);
       entity.nameLabel.setText("");
       entity.nameLabel.setVisible(false);
+      this.drawTownCaptureBar(entity, px, py, town);
       return;
     }
 
@@ -1568,6 +1481,23 @@ export class GameScene extends Phaser.Scene {
     entity.nameLabel.setText(ownerDisplayName);
     entity.nameLabel.setVisible(true);
     entity.nameLabel.setStyle({ fontSize: "14px", fontStyle: "bold", color: "#000000" });
+    this.drawTownCaptureBar(entity, px, py, town);
+  }
+
+  private drawTownCaptureBar(entity: TownEntity, px: number, py: number, town: TownState): void {
+    const captureProgress =
+      town.contenderId == null ? 0 : Phaser.Math.Clamp(town.contenderSalvos / TOWN_CAPTURE_SALVOS_REQUIRED, 0, 1);
+    const width = 60;
+    const height = 8;
+    const x = px - width / 2;
+    const y = py + 34;
+    entity.captureBar.clear();
+    entity.captureBar.fillStyle(0x333333, 0.8);
+    entity.captureBar.fillRect(x, y, width, height);
+    if (captureProgress > 0) {
+      entity.captureBar.fillStyle(0x00ff00, 1);
+      entity.captureBar.fillRect(x, y, width * captureProgress, height);
+    }
   }
 
   /** Toast when the local player captures a town (gold style like ghost prat feedback). */
@@ -1615,7 +1545,9 @@ export class GameScene extends Phaser.Scene {
         } else {
           const shooterLevel = state.players?.[projectile.shooterId]?.level ?? 1;
           const shooterScale = boatDisplayScaleForLevel(shooterLevel);
-          fontSize = `${playerProjectileFontSizePxForScale(shooterScale)}px`;
+          const baseFontSize = playerProjectileFontSizePxForScale(shooterScale);
+          const adjustedFontSize = projectile.isShortRange ? Math.max(14, Math.round(baseFontSize * 0.65)) : baseFontSize;
+          fontSize = `${adjustedFontSize}px`;
         }
         const projX = simulationToPhaserPixels(projectile.x);
         const projY = simulationToPhaserPixels(projectile.y);

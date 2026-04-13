@@ -17,6 +17,7 @@ export class PlayersController {
       kills_octopus?: number;
       kills_stingray?: number;
       prats_captured?: number;
+      prats?: number;
       is_ghost?: boolean;
       ghost_prats_captured?: number;
     }
@@ -43,6 +44,7 @@ export class PlayersController {
           kills_octopus: body.kills_octopus ?? 0,
           kills_stingray: body.kills_stingray ?? 0,
           prats_captured: body.prats_captured ?? 0,
+          prats: body.prats ?? 0,
           is_ghost: body.is_ghost ?? false,
           ghost_prats_captured: body.ghost_prats_captured ?? 0,
           updated_at: new Date().toISOString(),
@@ -73,7 +75,7 @@ export class PlayersController {
       const { data, error } = await supabase
         .from("players")
         .select(
-          "id, name, exp, level, kills_octopus, kills_stingray, prats_captured, is_ghost, ghost_prats_captured"
+          "id, name, exp, level, kills_octopus, kills_stingray, prats_captured, prats, is_ghost, ghost_prats_captured"
         )
         .eq("name", decodeURIComponent(name).trim())
         .maybeSingle();

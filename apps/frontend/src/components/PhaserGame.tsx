@@ -25,6 +25,22 @@ export const PhaserGame = forwardRef<PhaserGameRef, PhaserGameProps>(
       const game = StartGame("game-container");
       gameRef.current = game;
 
+      const refreshGameScale = (): void => {
+        game.scale.refresh();
+      };
+
+      const scheduleScaleRefreshForRotation = (): void => {
+        refreshGameScale();
+        requestAnimationFrame(refreshGameScale);
+        window.setTimeout(refreshGameScale, 120);
+        window.setTimeout(refreshGameScale, 350);
+      };
+
+      window.addEventListener("resize", scheduleScaleRefreshForRotation);
+      window.addEventListener("orientationchange", scheduleScaleRefreshForRotation);
+      const visualViewport = window.visualViewport;
+      visualViewport?.addEventListener("resize", scheduleScaleRefreshForRotation);
+
       const refValue = { game, scene: null };
       if (typeof ref === "function") {
         ref(refValue);
@@ -33,6 +49,9 @@ export const PhaserGame = forwardRef<PhaserGameRef, PhaserGameProps>(
       }
 
       return () => {
+        window.removeEventListener("resize", scheduleScaleRefreshForRotation);
+        window.removeEventListener("orientationchange", scheduleScaleRefreshForRotation);
+        visualViewport?.removeEventListener("resize", scheduleScaleRefreshForRotation);
         if (gameRef.current) {
           gameRef.current.destroy(true);
           gameRef.current = null;
@@ -64,6 +83,8 @@ export const PhaserGame = forwardRef<PhaserGameRef, PhaserGameProps>(
       };
     }, [currentActiveScene, ref]);
 
-    return <div id="game-container" className="h-full w-full" />;
+    return (
+      <div id="game-container" className="h-full min-h-0 min-w-0 w-full flex-1" />
+    );
   }
 );

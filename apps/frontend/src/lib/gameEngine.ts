@@ -87,8 +87,6 @@ const PROJECTILE_MAX_RANGE = PLAYER_PROJECTILE_MAX_TRAVEL_SIMULATION_UNITS;
 const PRAT_LETTERS = ["P", "R", "A", "T"];
 const PRAT_WORDS = ["prat", "PRAT", "prat", "PrAt", "prat"];
 const PRAT_STYLE_ROLLS: { fontStyle: string; power: number }[] = [
-  { fontStyle: "normal", power: 1 },
-  { fontStyle: "bold", power: 2 },
   { fontStyle: "bold", power: 2 },
   { fontStyle: "bold", power: 3 },
 ];

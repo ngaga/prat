@@ -16,29 +16,20 @@ export class MenuScene extends Phaser.Scene {
 
     this.add.rectangle(centerX, centerY, 800, 600, 0xffffff);
 
-    const title = this.add
-      .text(centerX, centerY - 100, "Prat", {
-        fontFamily: MENU_TEXT_FONT_FAMILY,
-        fontSize: "64px",
-        color: "#000",
-      })
-      .setOrigin(0.5);
+    const titleElement = document.createElement("div");
+    titleElement.textContent = "Prat";
+    titleElement.style.cssText = `font-family: ${MENU_TEXT_FONT_FAMILY}; font-size: 64px; font-weight: 700; color: #000; line-height: 1; text-align: center;`;
+    this.add.dom(centerX, centerY - 100, titleElement);
 
-    const subtitle = this.add
-      .text(centerX, centerY - 30, "Chasse aux Prat en mer", {
-        fontFamily: MENU_TEXT_FONT_FAMILY,
-        fontSize: "20px",
-        color: "#333",
-      })
-      .setOrigin(0.5);
+    const subtitleElement = document.createElement("div");
+    subtitleElement.textContent = "Chasse aux Prat en mer";
+    subtitleElement.style.cssText = `font-family: ${MENU_TEXT_FONT_FAMILY}; font-size: 20px; color: #333; line-height: 1.2; text-align: center;`;
+    this.add.dom(centerX, centerY - 30, subtitleElement);
 
-    const nameLabel = this.add
-      .text(centerX, centerY + 10, "Entre ton nom", {
-        fontFamily: MENU_TEXT_FONT_FAMILY,
-        fontSize: "18px",
-        color: "#333",
-      })
-      .setOrigin(0.5);
+    const nameLabelElement = document.createElement("div");
+    nameLabelElement.textContent = "Entre ton nom";
+    nameLabelElement.style.cssText = `font-family: ${MENU_TEXT_FONT_FAMILY}; font-size: 18px; color: #333; line-height: 1.2; text-align: center;`;
+    this.add.dom(centerX, centerY + 10, nameLabelElement);
 
     const nameInput = document.createElement("input");
     nameInput.type = "text";
@@ -57,38 +48,27 @@ export class MenuScene extends Phaser.Scene {
     const playButtonWidth = 200;
     const playButtonHeight = 56;
 
-    const playButtonBackground = this.add
-      .rectangle(centerX, playButtonY, playButtonWidth, playButtonHeight, 0x333333)
-      .setInteractive({ useHandCursor: true });
-
-    const playButtonText = this.add
-      .text(centerX, playButtonY, "Jouer", {
-        fontFamily: MENU_TEXT_FONT_FAMILY,
-        fontSize: "32px",
-        color: "#fff",
-      })
-      .setOrigin(0.5)
-      .setDepth(1);
-
-    const errorText = this.add
-      .text(centerX, centerY + 150, "", {
-        fontFamily: MENU_TEXT_FONT_FAMILY,
-        fontSize: "16px",
-        color: "#c00",
-      })
-      .setOrigin(0.5);
-
-    playButtonBackground.on("pointerover", () => {
-      playButtonBackground.setFillStyle(0x555555);
+    const playButtonElement = document.createElement("button");
+    playButtonElement.type = "button";
+    playButtonElement.textContent = "Jouer";
+    playButtonElement.style.cssText = `width: ${playButtonWidth}px; height: ${playButtonHeight}px; border: 0; border-radius: 8px; background: #333; color: #fff; font-family: ${MENU_TEXT_FONT_FAMILY}; font-size: 32px; line-height: 1; cursor: pointer;`;
+    playButtonElement.addEventListener("mouseenter", () => {
+      playButtonElement.style.background = "#555";
     });
-    playButtonBackground.on("pointerout", () => {
-      playButtonBackground.setFillStyle(0x333333);
+    playButtonElement.addEventListener("mouseleave", () => {
+      playButtonElement.style.background = "#333";
     });
+    const playButtonDom = this.add.dom(centerX, playButtonY, playButtonElement);
+    playButtonDom.pointerEvents = "auto";
+
+    const errorTextElement = document.createElement("div");
+    errorTextElement.style.cssText = `min-height: 20px; font-family: ${MENU_TEXT_FONT_FAMILY}; font-size: 16px; color: #c00; text-align: center;`;
+    const errorText = this.add.dom(centerX, centerY + 150, errorTextElement);
 
     const submitPlay = (): void => {
       const name = (nameInputDom.node as HTMLInputElement).value.trim();
       if (!name) {
-        errorText.setText("Entre ton nom pour jouer");
+        errorTextElement.textContent = "Entre ton nom pour jouer";
         this.tweens.add({
           targets: errorText,
           alpha: 0.3,
@@ -97,11 +77,11 @@ export class MenuScene extends Phaser.Scene {
         });
         return;
       }
-      errorText.setText("");
+      errorTextElement.textContent = "";
       this.startGame(name);
     };
 
-    playButtonBackground.on("pointerdown", submitPlay);
+    playButtonElement.addEventListener("click", submitPlay);
 
     const keyboard = this.input.keyboard;
     if (keyboard) {
@@ -111,6 +91,11 @@ export class MenuScene extends Phaser.Scene {
       keyboard.on("keydown-ENTER", onEnter);
       this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
         keyboard.off("keydown-ENTER", onEnter);
+        playButtonElement.removeEventListener("click", submitPlay);
+      });
+    } else {
+      this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+        playButtonElement.removeEventListener("click", submitPlay);
       });
     }
   }

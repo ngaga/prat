@@ -89,8 +89,8 @@ const PRAT_WORDS = ["prat", "PRAT", "prat", "PrAt", "prat"];
 const PRAT_STYLE_ROLLS: { fontStyle: string; power: number }[] = [
   { fontStyle: "normal", power: 1 },
   { fontStyle: "bold", power: 2 },
-  { fontStyle: "italic", power: 2 },
-  { fontStyle: "bold italic", power: 3 },
+  { fontStyle: "bold", power: 2 },
+  { fontStyle: "bold", power: 3 },
 ];
 const SALVO_LETTER_DELAY_MS = 80;
 const SHOOT_START_TOLERANCE = 120;

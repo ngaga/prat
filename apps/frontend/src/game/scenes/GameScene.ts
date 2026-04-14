@@ -139,6 +139,7 @@ function nameLabelOffsetAboveBoatForScale(scale: number): number {
 const BOAT_NAME_FONT_SIZE_BASE_PX = 12;
 const BOAT_NAME_FONT_SIZE_MAX_PX = 28;
 const PRAT_TEXT_SIZE_MULTIPLIER = 1.08;
+const GAME_TEXT_FONT_FAMILY = "Verdana, Arial, sans-serif";
 
 function boatNameFontSizePxForScale(scale: number): number {
   const ratio = scale / BOAT_DISPLAY_SCALE_BASE;
@@ -432,6 +433,7 @@ export class GameScene extends Phaser.Scene {
         : shortId(this.multiplayer.getPlayerId());
     this.boatNameLabel = this.add
       .text(0, -50, displayName, {
+        fontFamily: GAME_TEXT_FONT_FAMILY,
         fontSize: "12px",
         color: "#000",
       })
@@ -478,6 +480,7 @@ export class GameScene extends Phaser.Scene {
 
     this.scoreText = this.add
       .text(0, 0, formatPratsHudLabel(0), {
+        fontFamily: GAME_TEXT_FONT_FAMILY,
         fontSize: "20px",
         color: "#000",
       })
@@ -487,6 +490,7 @@ export class GameScene extends Phaser.Scene {
 
     this.ghostHudText = this.add
       .text(20, 48, "", {
+        fontFamily: GAME_TEXT_FONT_FAMILY,
         fontSize: "14px",
         color: "#444",
       })
@@ -496,6 +500,7 @@ export class GameScene extends Phaser.Scene {
 
     const statusText = this.add
       .text(0, 0, "", {
+        fontFamily: GAME_TEXT_FONT_FAMILY,
         fontSize: "14px",
         color: "#333",
       })
@@ -550,15 +555,27 @@ export class GameScene extends Phaser.Scene {
     this.drawBar(this.experienceBar, BAR_X, experienceY, barWidth, barHeight, 0x333333, 0x9b59b6, 0);
 
     this.add
-      .text(labelX, lifeY + barHeight / 2, "PV", { fontSize: "12px", color: "#000" })
+      .text(labelX, lifeY + barHeight / 2, "PV", {
+        fontFamily: GAME_TEXT_FONT_FAMILY,
+        fontSize: "12px",
+        color: "#000",
+      })
       .setOrigin(0, 0.5)
       .setScrollFactor(0);
     this.add
-      .text(labelX, experienceY + barHeight / 2, "Exp.", { fontSize: "12px", color: "#000" })
+      .text(labelX, experienceY + barHeight / 2, "Exp.", {
+        fontFamily: GAME_TEXT_FONT_FAMILY,
+        fontSize: "12px",
+        color: "#000",
+      })
       .setOrigin(0, 0.5)
       .setScrollFactor(0);
     this.add
-      .text(BAR_X + barWidth + 10, experienceY + barHeight / 2, `Niv. ${this.level}`, { fontSize: "12px", color: "#000" })
+      .text(BAR_X + barWidth + 10, experienceY + barHeight / 2, `Niv. ${this.level}`, {
+        fontFamily: GAME_TEXT_FONT_FAMILY,
+        fontSize: "12px",
+        color: "#000",
+      })
       .setOrigin(0, 0.5)
       .setScrollFactor(0)
       .setName("level-text");
@@ -619,6 +636,7 @@ export class GameScene extends Phaser.Scene {
   private showLevelUpMessage(newLevel: number): void {
     const levelUpText = this.add
       .text(this.scale.width / 2, this.scale.height / 2 - 50, `Niveau ${newLevel} !`, {
+        fontFamily: GAME_TEXT_FONT_FAMILY,
         fontSize: "32px",
         fontStyle: "bold",
         color: "#9b59b6",
@@ -916,11 +934,17 @@ export class GameScene extends Phaser.Scene {
     const displayName =
       data.name && data.name.length <= MAX_PLAYER_NAME_LENGTH ? data.name : shortId(data.id);
     boatData.nameLabel.setText(displayName);
-    boatData.nameLabel.setStyle({ fontSize: `${boatNameFontSizePxForScale(remoteScale)}px` });
+    boatData.nameLabel.setStyle({
+      fontFamily: GAME_TEXT_FONT_FAMILY,
+      fontSize: `${boatNameFontSizePxForScale(remoteScale)}px`,
+    });
     const labelOffset = nameLabelOffsetAboveBoatForScale(remoteScale);
     const displayedX = boatData.sprite.x;
     const displayedY = boatData.sprite.y;
-    boatData.nameLabel.setPosition(displayedX, displayedY - labelOffset);
+    boatData.nameLabel.setPosition(
+      snapToPixel(displayedX),
+      snapToPixel(displayedY - labelOffset)
+    );
     const lifeRatio = (data.life ?? MAX_LIFE) / MAX_LIFE;
     boatData.lifeBar?.clear();
     if (boatData.lifeBar) {
@@ -983,13 +1007,14 @@ export class GameScene extends Phaser.Scene {
         let boatData = this.remoteBoats.get(playerId);
         if (!boatData) {
           if (!this.textures.exists("boat")) return;
-          const sprite = this.add.image(data.x, data.y, "boat");
+          const sprite = this.add.image(snapToPixel(data.x), snapToPixel(data.y), "boat");
           sprite.setDepth(5);
           sprite.setInteractive({ useHandCursor: true });
           const displayName =
             data.name && data.name.length <= MAX_PLAYER_NAME_LENGTH ? data.name : shortId(playerId);
           const nameLabel = this.add
             .text(data.x, data.y - 50, displayName, {
+              fontFamily: GAME_TEXT_FONT_FAMILY,
               fontSize: "12px",
               color: "#000",
             })
@@ -1137,7 +1162,11 @@ export class GameScene extends Phaser.Scene {
     if (!this.isSceneActive) return;
     try {
       const label = this.add
-        .text(this.scale.width / 2, 110, message, { fontSize: "16px", color: "#1f2d3d" })
+        .text(this.scale.width / 2, 110, message, {
+          fontFamily: GAME_TEXT_FONT_FAMILY,
+          fontSize: "16px",
+          color: "#1f2d3d",
+        })
         .setOrigin(0.5)
         .setScrollFactor(0)
         .setDepth(1000);
@@ -1208,10 +1237,13 @@ export class GameScene extends Phaser.Scene {
     }
     if (!this.boat || !this.boatNameLabel || !this.lifeBar || !this.experienceBar) return;
     const localNameFontPx = boatNameFontSizePxForScale(this.boat.scaleX);
-    this.boatNameLabel.setStyle({ fontSize: `${localNameFontPx}px` });
+    this.boatNameLabel.setStyle({
+      fontFamily: GAME_TEXT_FONT_FAMILY,
+      fontSize: `${localNameFontPx}px`,
+    });
     this.boatNameLabel.setPosition(
-      this.boat.x,
-      this.boat.y - nameLabelOffsetAboveBoatForScale(this.boat.scaleX)
+      snapToPixel(this.boat.x),
+      snapToPixel(this.boat.y - nameLabelOffsetAboveBoatForScale(this.boat.scaleX))
     );
     this.sea.setPosition(this.boat.x, this.boat.y);
     this.sea.tilePositionX = this.boat.x;
@@ -1447,6 +1479,7 @@ export class GameScene extends Phaser.Scene {
     try {
       const tutorialText = this.add
         .text(0, 0, "Joystick: one finger   Other finger: shoot (both at once)", {
+          fontFamily: GAME_TEXT_FONT_FAMILY,
           fontSize: "26px",
           color: "#1f2d3d",
           backgroundColor: "rgba(255,255,255,0.82)",
@@ -1559,7 +1592,7 @@ export class GameScene extends Phaser.Scene {
           previousAttachedId === undefined &&
           this.localBoatPositionSyncedFromAuthoritativeState;
         if (awaitingFirstAuthoritativePlacement) {
-          boat.setPosition(serverX, serverY);
+          boat.setPosition(snapToPixel(serverX), snapToPixel(serverY));
           boat.setAlpha(1);
           this.boatNameLabel.setAlpha(1);
           if (!this.cameraFollowsLocalBoat) {
@@ -1573,7 +1606,7 @@ export class GameScene extends Phaser.Scene {
             this.spawnTownInterceptionBurst(serverX, serverY);
           }
         } else if (dist > reconciliationThresholdPhaser) {
-          boat.setPosition(serverX, serverY);
+          boat.setPosition(snapToPixel(serverX), snapToPixel(serverY));
         }
         this.localBoatPositionSyncedFromAuthoritativeState = true;
         this.refreshLocalBoatDisplayScale();
@@ -1609,8 +1642,8 @@ export class GameScene extends Phaser.Scene {
       playersFromServer.set(playerId, {
         id: playerId,
         name: playerData.name,
-        x: simulationToPhaserPixels(playerData.x ?? 0),
-        y: simulationToPhaserPixels(playerData.y ?? 0),
+        x: snapToPixel(simulationToPhaserPixels(playerData.x ?? 0)),
+        y: snapToPixel(simulationToPhaserPixels(playerData.y ?? 0)),
         rotation: playerData.rotation,
         score: playerData.score ?? 0,
         life: playerData.life ?? MAX_LIFE,
@@ -1730,8 +1763,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   private upsertTownVisual(id: string, town: TownState): void {
-    const px = simulationToPhaserPixels(town.x);
-    const py = simulationToPhaserPixels(town.y);
+    const px = snapToPixel(simulationToPhaserPixels(town.x));
+    const py = snapToPixel(simulationToPhaserPixels(town.y));
     let entity = this.townEntities.get(id);
     const labelText = "T";
     const localPlayerId = this.multiplayer.getPlayerId();
@@ -1744,6 +1777,7 @@ export class GameScene extends Phaser.Scene {
 
     if (!entity) {
       const text = this.add.text(px, py, labelText, {
+        fontFamily: GAME_TEXT_FONT_FAMILY,
         fontSize: "46px",
         fontStyle: "bold",
         color: "#000000",
@@ -1753,6 +1787,7 @@ export class GameScene extends Phaser.Scene {
       text.setAlpha(1);
 
       const nameLabel = this.add.text(px, nameLabelY, ownerDisplayName, {
+        fontFamily: GAME_TEXT_FONT_FAMILY,
         fontSize: "14px",
         fontStyle: "bold",
         color: "#000000",
@@ -1791,7 +1826,12 @@ export class GameScene extends Phaser.Scene {
 
     if (isNeutral) {
       entity.text.setAlpha(1);
-      entity.text.setStyle({ fontSize: "46px", fontStyle: "bold", color: "#000000" });
+      entity.text.setStyle({
+        fontFamily: GAME_TEXT_FONT_FAMILY,
+        fontSize: "46px",
+        fontStyle: "bold",
+        color: "#000000",
+      });
       entity.text.setShadow(0, 0, "#000000", 0, false, false);
       entity.nameLabel.setText("");
       entity.nameLabel.setVisible(false);
@@ -1799,7 +1839,12 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    entity.text.setStyle({ fontSize: "46px", fontStyle: "bold", color: letterColor });
+    entity.text.setStyle({
+      fontFamily: GAME_TEXT_FONT_FAMILY,
+      fontSize: "46px",
+      fontStyle: "bold",
+      color: letterColor,
+    });
     entity.text.setShadow(0, 0, glowColor, 10, true, true);
     entity.text.setAlpha(1);
     this.tweens.add({
@@ -1813,7 +1858,12 @@ export class GameScene extends Phaser.Scene {
 
     entity.nameLabel.setText(ownerDisplayName);
     entity.nameLabel.setVisible(true);
-    entity.nameLabel.setStyle({ fontSize: "14px", fontStyle: "bold", color: "#000000" });
+    entity.nameLabel.setStyle({
+      fontFamily: GAME_TEXT_FONT_FAMILY,
+      fontSize: "14px",
+      fontStyle: "bold",
+      color: "#000000",
+    });
     this.drawTownCaptureBar(entity, px, py, town);
   }
 
@@ -1839,7 +1889,7 @@ export class GameScene extends Phaser.Scene {
     try {
       const label = this.add
         .text(this.scale.width / 2, this.scale.height * 0.22, "Captured", {
-          fontFamily: "Arial",
+          fontFamily: GAME_TEXT_FONT_FAMILY,
           fontSize: "28px",
           fontStyle: "bold",
           color: "#ffd700",
@@ -1954,6 +2004,7 @@ export class GameScene extends Phaser.Scene {
         let text = this.serverProjectileSprites.get(id);
         if (!text) {
           text = this.add.text(projX, projY, projectile.letter, {
+            fontFamily: GAME_TEXT_FONT_FAMILY,
             fontSize,
             fontStyle: "bold",
             color: "#000000",
@@ -1966,7 +2017,12 @@ export class GameScene extends Phaser.Scene {
           if (text.text !== projectile.letter) {
             text.setText(projectile.letter);
           }
-          text.setStyle({ fontSize, fontStyle: "bold", color: "#000000" });
+          text.setStyle({
+            fontFamily: GAME_TEXT_FONT_FAMILY,
+            fontSize,
+            fontStyle: "bold",
+            color: "#000000",
+          });
         }
       }
       for (const id of Array.from(this.serverProjectileSprites.keys())) {
@@ -2053,8 +2109,8 @@ export class GameScene extends Phaser.Scene {
       const seenIds = new Set<string>();
       for (const [id, ray] of Object.entries(stingraysFromServer)) {
         seenIds.add(id);
-        const rayX = simulationToPhaserPixels(ray.x);
-        const rayY = simulationToPhaserPixels(ray.y);
+        const rayX = snapToPixel(simulationToPhaserPixels(ray.x));
+        const rayY = snapToPixel(simulationToPhaserPixels(ray.y));
         const isLocalCarrier = id === this.localAttachedStingrayId;
         let entity = this.stingrays.get(id);
         const maxLife = ray.maxLife > 0 ? ray.maxLife : STINGRAY_LIFE;
@@ -2089,7 +2145,7 @@ export class GameScene extends Phaser.Scene {
           } else {
             entity.authoritativeWorldX = undefined;
             entity.authoritativeWorldY = undefined;
-            entity.sprite.setPosition(rayX, rayY);
+            entity.sprite.setPosition(snapToPixel(rayX), snapToPixel(rayY));
           }
         }
         const lifeRatio = ray.life / maxLife;
@@ -2128,8 +2184,8 @@ export class GameScene extends Phaser.Scene {
       const seenIds = new Set<string>();
       for (const [id, enemy] of Object.entries(state.enemies)) {
         seenIds.add(id);
-        const enemyX = simulationToPhaserPixels(enemy.x);
-        const enemyY = simulationToPhaserPixels(enemy.y);
+        const enemyX = snapToPixel(simulationToPhaserPixels(enemy.x));
+        const enemyY = snapToPixel(simulationToPhaserPixels(enemy.y));
 
         let entity = this.octopuses.get(id);
         if (!entity) {
@@ -2148,7 +2204,7 @@ export class GameScene extends Phaser.Scene {
           };
           this.octopuses.set(id, entity);
         } else {
-          entity.sprite.setPosition(enemyX, enemyY);
+          entity.sprite.setPosition(snapToPixel(enemyX), snapToPixel(enemyY));
           entity.life = enemy.life;
           entity.lastShotTime = enemy.lastShotTime;
           entity.spawnTime = enemy.spawnTime;
@@ -2245,7 +2301,7 @@ export class GameScene extends Phaser.Scene {
     if (!this.isSceneActive) return;
     try {
       const label = this.add.text(worldX, worldY, String(displayValue), {
-        fontFamily: "Arial",
+        fontFamily: GAME_TEXT_FONT_FAMILY,
         fontSize: "32px",
         fontStyle: "bold",
         color: "#ffd700",

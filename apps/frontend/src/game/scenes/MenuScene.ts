@@ -2,19 +2,23 @@ import Phaser from "phaser";
 import { MAX_PLAYER_NAME_LENGTH } from "@/game/config";
 import { isOctopusesEnabled, isStingraysEnabled } from "@/lib/featureFlags";
 
+const MENU_TEXT_FONT_FAMILY = "Verdana, Arial, sans-serif";
+
 export class MenuScene extends Phaser.Scene {
   constructor() {
     super({ key: "MenuScene" });
   }
 
   create(): void {
-    const centerX = this.cameras.main.centerX;
-    const centerY = this.cameras.main.centerY;
+    this.cameras.main.roundPixels = true;
+    const centerX = Math.round(this.cameras.main.centerX);
+    const centerY = Math.round(this.cameras.main.centerY);
 
     this.add.rectangle(centerX, centerY, 800, 600, 0xffffff);
 
     const title = this.add
       .text(centerX, centerY - 100, "Prat", {
+        fontFamily: MENU_TEXT_FONT_FAMILY,
         fontSize: "64px",
         color: "#000",
       })
@@ -22,6 +26,7 @@ export class MenuScene extends Phaser.Scene {
 
     const subtitle = this.add
       .text(centerX, centerY - 30, "Chasse aux Prat en mer", {
+        fontFamily: MENU_TEXT_FONT_FAMILY,
         fontSize: "20px",
         color: "#333",
       })
@@ -29,6 +34,7 @@ export class MenuScene extends Phaser.Scene {
 
     const nameLabel = this.add
       .text(centerX, centerY + 10, "Entre ton nom", {
+        fontFamily: MENU_TEXT_FONT_FAMILY,
         fontSize: "18px",
         color: "#333",
       })
@@ -39,7 +45,7 @@ export class MenuScene extends Phaser.Scene {
     nameInput.placeholder = "Ton nom";
     nameInput.maxLength = MAX_PLAYER_NAME_LENGTH;
     nameInput.style.cssText =
-      "width: 220px; height: 40px; font-size: 18px; padding: 8px; border: 2px solid #333; text-align: center; pointer-events: auto;";
+      `width: 220px; height: 40px; font-size: 18px; font-family: ${MENU_TEXT_FONT_FAMILY}; padding: 8px; border: 2px solid #333; text-align: center; pointer-events: auto;`;
     const nameInputDom = this.add.dom(centerX, centerY + 50, nameInput);
     nameInputDom.pointerEvents = "auto";
 
@@ -57,6 +63,7 @@ export class MenuScene extends Phaser.Scene {
 
     const playButtonText = this.add
       .text(centerX, playButtonY, "Jouer", {
+        fontFamily: MENU_TEXT_FONT_FAMILY,
         fontSize: "32px",
         color: "#fff",
       })
@@ -65,6 +72,7 @@ export class MenuScene extends Phaser.Scene {
 
     const errorText = this.add
       .text(centerX, centerY + 150, "", {
+        fontFamily: MENU_TEXT_FONT_FAMILY,
         fontSize: "16px",
         color: "#c00",
       })

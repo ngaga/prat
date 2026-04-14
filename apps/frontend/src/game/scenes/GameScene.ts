@@ -26,19 +26,19 @@ import { setBackgroundMusicForGhostMode, stopBackgroundMusic } from "../backgrou
 
 interface PratEntity {
   id: string;
-  text: Phaser.GameObjects.Text;
+  text: Phaser.GameObjects.BitmapText;
 }
 
 interface TownEntity {
   id: string;
-  text: Phaser.GameObjects.Text;
-  nameLabel: Phaser.GameObjects.Text;
+  text: Phaser.GameObjects.BitmapText;
+  nameLabel: Phaser.GameObjects.BitmapText;
   captureBar: Phaser.GameObjects.Graphics;
 }
 
 interface RemoteBoatData {
   sprite: Phaser.GameObjects.Image;
-  nameLabel: Phaser.GameObjects.Text;
+  nameLabel: Phaser.GameObjects.BitmapText;
   lifeBar?: Phaser.GameObjects.Graphics;
   /** Server snapshot target; sprite is smoothed toward this each frame. */
   authoritativeWorldX: number;
@@ -136,10 +136,11 @@ function nameLabelOffsetAboveBoatForScale(scale: number): number {
   return (NAME_LABEL_OFFSET_AT_BASE_SCALE / BOAT_DISPLAY_SCALE_BASE) * scale;
 }
 
-const BOAT_NAME_FONT_SIZE_BASE_PX = 12;
-const BOAT_NAME_FONT_SIZE_MAX_PX = 28;
+const BOAT_NAME_FONT_SIZE_BASE_PX = 24;
+const BOAT_NAME_FONT_SIZE_MAX_PX = 56;
 const PRAT_TEXT_SIZE_MULTIPLIER = 1.08;
-const GAME_TEXT_FONT_FAMILY = "Verdana, Arial, sans-serif";
+const GAME_MSDF_FONT_KEY = "uiMsdf";
+const GAME_MSDF_PIPELINE_KEY = "uiMsdfPipeline";
 
 function boatNameFontSizePxForScale(scale: number): number {
   const ratio = scale / BOAT_DISPLAY_SCALE_BASE;
@@ -152,6 +153,11 @@ function boatNameFontSizePxForScale(scale: number): number {
 
 function snapToPixel(value: number): number {
   return Math.round(value);
+}
+
+function snapToZoomedPixel(value: number, zoom: number): number {
+  const safeZoom = zoom > 0.001 ? zoom : 1;
+  return Math.round(value * safeZoom) / safeZoom;
 }
 
 function pratFontSizePx(fontSize: number): number {
@@ -172,6 +178,13 @@ function playerProjectileFontSizePxForScale(scale: number): number {
 
 function shortId(uuid: string): string {
   return uuid.slice(0, 8);
+}
+
+function textColorToTint(colorHex: string): number {
+  const normalized = colorHex.trim();
+  const isHexColor = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(normalized);
+  if (!isHexColor) return 0x000000;
+  return Phaser.Display.Color.HexStringToColor(normalized).color;
 }
 
 function formatPratsHudLabel(prats: number): string {
@@ -199,7 +212,7 @@ function normalizeDirection(
 
 export class GameScene extends Phaser.Scene {
   private boat!: Phaser.Physics.Arcade.Sprite;
-  private boatNameLabel!: Phaser.GameObjects.Text;
+  private boatNameLabel!: Phaser.GameObjects.BitmapText;
   private moveTargetX: number | null = null;
   private moveTargetY: number | null = null;
   private readonly moveArrivalThreshold = simulationToPhaserPixels(PLAYER_MOVE_ARRIVAL_THRESHOLD_SIMULATION_UNITS);
@@ -211,7 +224,7 @@ export class GameScene extends Phaser.Scene {
   /** Tracks capture progress across snapshots to trigger interception pulse VFX. */
   private townPreviousContenderSalvosById = new Map<string, number>();
   private score: number = 0;
-  private scoreText!: Phaser.GameObjects.Text;
+  private scoreText!: Phaser.GameObjects.BitmapText;
   private readonly boatSpeed = simulationToPhaserPixels(PLAYER_BOAT_SPEED_SIMULATION_UNITS_PER_SECOND);
   private multiplayer!: MultiplayerManager;
   private remoteBoats = new Map<string, RemoteBoatData>();
@@ -244,7 +257,7 @@ export class GameScene extends Phaser.Scene {
   private readonly authoritativeGameServer = true;
   private lastMoveInputSentAt = 0;
   private readonly serverMoveThrottleMs = 100;
-  private serverProjectileSprites = new Map<string, Phaser.GameObjects.Text>();
+  private serverProjectileSprites = new Map<string, Phaser.GameObjects.BitmapText>();
   private processedEliminationIds = new Set<string>();
   private processedProjectileHitReceivedEventIds = new Set<string>();
   private processedProjectileHitDealtEventIds = new Set<string>();
@@ -270,7 +283,7 @@ export class GameScene extends Phaser.Scene {
   private localIsGhost = false;
   /** Mirrors server ghost prat count; used for Supabase persistence like experience. */
   private syncedGhostPratsCaptured = 0;
-  private ghostHudText: Phaser.GameObjects.Text | null = null;
+  private ghostHudText: Phaser.GameObjects.BitmapText | null = null;
   /** True when the game canvas uses CSS invert for local ghost mode (affects boat tint vs clear tint). */
   private ghostCameraInversionActive = false;
   /** When the local player is alive, ghost remote boats use per-sprite inversion (camera is off). */
@@ -308,7 +321,7 @@ export class GameScene extends Phaser.Scene {
   private readonly mobileCameraZoomUpperCap = 3.25;
   private readonly mobileJoystickWorldScratch = new Phaser.Math.Vector2();
   /** Short-lived; kept so we can pin it to the viewport while the camera moves. */
-  private mobileTutorialHudText: Phaser.GameObjects.Text | null = null;
+  private mobileTutorialHudText: Phaser.GameObjects.BitmapText | null = null;
 
   constructor() {
     super({ key: "GameScene" });
@@ -318,6 +331,34 @@ export class GameScene extends Phaser.Scene {
     this.octopusesEnabled = coerceClientFeatureFlag(data?.octopusesEnabled);
     this.stingraysEnabled = coerceClientFeatureFlag(data?.stingraysEnabled);
     this.playerName = data?.playerName ?? null;
+  }
+
+  private createMsdfBitmapText(
+    x: number,
+    y: number,
+    value: string,
+    fontSizePx: number,
+    colorHex: string
+  ): Phaser.GameObjects.BitmapText {
+    const label = this.add.bitmapText(x, y, GAME_MSDF_FONT_KEY, value, fontSizePx);
+    label.setTint(textColorToTint(colorHex));
+    if (this.game.renderer instanceof Phaser.Renderer.WebGL.WebGLRenderer) {
+      label.setPipeline(GAME_MSDF_PIPELINE_KEY);
+    }
+    return label;
+  }
+
+  private setMsdfBitmapTextStyle(
+    label: Phaser.GameObjects.BitmapText,
+    fontSizePx: number,
+    colorHex: string
+  ): void {
+    label.setFontSize(fontSizePx);
+    label.setTint(textColorToTint(colorHex));
+  }
+
+  private snapWorldTextPosition(value: number): number {
+    return snapToZoomedPixel(value, this.cameras.main.zoom);
   }
 
   async create(): Promise<void> {
@@ -431,13 +472,7 @@ export class GameScene extends Phaser.Scene {
       this.playerName && this.playerName.length <= MAX_PLAYER_NAME_LENGTH
         ? this.playerName
         : shortId(this.multiplayer.getPlayerId());
-    this.boatNameLabel = this.add
-      .text(0, -50, displayName, {
-        fontFamily: GAME_TEXT_FONT_FAMILY,
-        fontSize: "12px",
-        color: "#000",
-      })
-      .setOrigin(0.5);
+    this.boatNameLabel = this.createMsdfBitmapText(0, -50, displayName, 12, "#000000").setOrigin(0.5);
     this.boatNameLabel.setAlpha(0);
 
     this.cameras.main.setBounds(-WORLD_SIZE, -WORLD_SIZE, WORLD_SIZE * 2, WORLD_SIZE * 2);
@@ -478,32 +513,17 @@ export class GameScene extends Phaser.Scene {
       await this.beginGameSessionRecording(resolvedPlayer.id);
     }
 
-    this.scoreText = this.add
-      .text(0, 0, formatPratsHudLabel(0), {
-        fontFamily: GAME_TEXT_FONT_FAMILY,
-        fontSize: "20px",
-        color: "#000",
-      })
+    this.scoreText = this.createMsdfBitmapText(0, 0, formatPratsHudLabel(0), 20, "#000000")
       .setScrollFactor(0)
       .setOrigin(0, 0)
       .setPosition(40, 20);
 
-    this.ghostHudText = this.add
-      .text(20, 48, "", {
-        fontFamily: GAME_TEXT_FONT_FAMILY,
-        fontSize: "14px",
-        color: "#444",
-      })
+    this.ghostHudText = this.createMsdfBitmapText(20, 48, "", 14, "#444444")
       .setScrollFactor(0)
       .setOrigin(0, 0)
       .setVisible(false);
 
-    const statusText = this.add
-      .text(0, 0, "", {
-        fontFamily: GAME_TEXT_FONT_FAMILY,
-        fontSize: "14px",
-        color: "#333",
-      })
+    const statusText = this.createMsdfBitmapText(0, 0, "", 14, "#333333")
       .setOrigin(1, 0)
       .setScrollFactor(0)
       .setName("multiplayer-status");
@@ -554,27 +574,11 @@ export class GameScene extends Phaser.Scene {
     this.experienceBar = this.add.graphics().setScrollFactor(0);
     this.drawBar(this.experienceBar, BAR_X, experienceY, barWidth, barHeight, 0x333333, 0x9b59b6, 0);
 
-    this.add
-      .text(labelX, lifeY + barHeight / 2, "PV", {
-        fontFamily: GAME_TEXT_FONT_FAMILY,
-        fontSize: "12px",
-        color: "#000",
-      })
+    this.createMsdfBitmapText(labelX, lifeY + barHeight / 2, "PV", 12, "#000000")
       .setOrigin(0, 0.5)
       .setScrollFactor(0);
-    this.add
-      .text(labelX, experienceY + barHeight / 2, "Exp.", {
-        fontFamily: GAME_TEXT_FONT_FAMILY,
-        fontSize: "12px",
-        color: "#000",
-      })
-      .setScrollFactor(0);
-    this.add
-      .text(BAR_X + barWidth + 10, experienceY + barHeight / 2, `Niv. ${this.level}`, {
-        fontFamily: GAME_TEXT_FONT_FAMILY,
-        fontSize: "12px",
-        color: "#000",
-      })
+    this.createMsdfBitmapText(labelX, experienceY + barHeight / 2, "Exp.", 12, "#000000").setScrollFactor(0);
+    this.createMsdfBitmapText(BAR_X + barWidth + 10, experienceY + barHeight / 2, `Niv. ${this.level}`, 12, "#000000")
       .setOrigin(0, 0.5)
       .setScrollFactor(0)
       .setName("level-text");
@@ -633,13 +637,13 @@ export class GameScene extends Phaser.Scene {
   }
 
   private showLevelUpMessage(newLevel: number): void {
-    const levelUpText = this.add
-      .text(this.scale.width / 2, this.scale.height / 2 - 50, `Niveau ${newLevel} !`, {
-        fontFamily: GAME_TEXT_FONT_FAMILY,
-        fontSize: "32px",
-        fontStyle: "bold",
-        color: "#9b59b6",
-      })
+    const levelUpText = this.createMsdfBitmapText(
+      this.scale.width / 2,
+      this.scale.height / 2 - 50,
+      `Niveau ${newLevel} !`,
+      32,
+      "#9b59b6"
+    )
       .setOrigin(0.5)
       .setScrollFactor(0)
       .setDepth(100);
@@ -821,13 +825,7 @@ export class GameScene extends Phaser.Scene {
       .rectangle(width / 2, height / 2, width + 8, height + 8, 0x000000)
       .setAlpha(1);
     const fontPixels = Math.min(width, height) * 0.2;
-    const label = this.add
-      .text(width / 2, height / 2, options.labelText, {
-        fontFamily: "Arial Black, Arial, sans-serif",
-        fontSize: `${fontPixels}px`,
-        color: "#ffffff",
-        fontStyle: "bold",
-      })
+    const label = this.createMsdfBitmapText(width / 2, height / 2, options.labelText, Math.round(fontPixels), "#ffffff")
       .setOrigin(0.5)
       .setAlpha(1);
     label.setScale(0.32);
@@ -933,16 +931,13 @@ export class GameScene extends Phaser.Scene {
     const displayName =
       data.name && data.name.length <= MAX_PLAYER_NAME_LENGTH ? data.name : shortId(data.id);
     boatData.nameLabel.setText(displayName);
-    boatData.nameLabel.setStyle({
-      fontFamily: GAME_TEXT_FONT_FAMILY,
-      fontSize: `${boatNameFontSizePxForScale(remoteScale)}px`,
-    });
+    boatData.nameLabel.setFontSize(boatNameFontSizePxForScale(remoteScale));
     const labelOffset = nameLabelOffsetAboveBoatForScale(remoteScale);
     const displayedX = boatData.sprite.x;
     const displayedY = boatData.sprite.y;
     boatData.nameLabel.setPosition(
-      snapToPixel(displayedX),
-      snapToPixel(displayedY - labelOffset)
+      this.snapWorldTextPosition(displayedX),
+      this.snapWorldTextPosition(displayedY - labelOffset)
     );
     const lifeRatio = (data.life ?? MAX_LIFE) / MAX_LIFE;
     boatData.lifeBar?.clear();
@@ -982,7 +977,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private updateMultiplayerStatus(): void {
-    const statusText = this.children.getByName("multiplayer-status") as Phaser.GameObjects.Text;
+    const statusText = this.children.getByName("multiplayer-status") as Phaser.GameObjects.BitmapText;
     if (statusText) {
       const n = this.connectedPlayerCount;
       const label = n === 1 ? "1 player" : `${n} players`;
@@ -1011,12 +1006,7 @@ export class GameScene extends Phaser.Scene {
           sprite.setInteractive({ useHandCursor: true });
           const displayName =
             data.name && data.name.length <= MAX_PLAYER_NAME_LENGTH ? data.name : shortId(playerId);
-          const nameLabel = this.add
-            .text(data.x, data.y - 50, displayName, {
-              fontFamily: GAME_TEXT_FONT_FAMILY,
-              fontSize: "12px",
-              color: "#000",
-            })
+          const nameLabel = this.createMsdfBitmapText(data.x, data.y - 50, displayName, 12, "#000000")
             .setOrigin(0.5)
             .setDepth(6);
           const lifeBar = this.add.graphics().setDepth(7);
@@ -1160,12 +1150,7 @@ export class GameScene extends Phaser.Scene {
   private spawnEphemeralHudMessage(message: string): void {
     if (!this.isSceneActive) return;
     try {
-      const label = this.add
-        .text(this.scale.width / 2, 110, message, {
-          fontFamily: GAME_TEXT_FONT_FAMILY,
-          fontSize: "16px",
-          color: "#1f2d3d",
-        })
+      const label = this.createMsdfBitmapText(this.scale.width / 2, 110, message, 16, "#1f2d3d")
         .setOrigin(0.5)
         .setScrollFactor(0)
         .setDepth(1000);
@@ -1236,13 +1221,10 @@ export class GameScene extends Phaser.Scene {
     }
     if (!this.boat || !this.boatNameLabel || !this.lifeBar || !this.experienceBar) return;
     const localNameFontPx = boatNameFontSizePxForScale(this.boat.scaleX);
-    this.boatNameLabel.setStyle({
-      fontFamily: GAME_TEXT_FONT_FAMILY,
-      fontSize: `${localNameFontPx}px`,
-    });
+    this.boatNameLabel.setFontSize(localNameFontPx);
     this.boatNameLabel.setPosition(
-      snapToPixel(this.boat.x),
-      snapToPixel(this.boat.y - nameLabelOffsetAboveBoatForScale(this.boat.scaleX))
+      this.snapWorldTextPosition(this.boat.x),
+      this.snapWorldTextPosition(this.boat.y - nameLabelOffsetAboveBoatForScale(this.boat.scaleX))
     );
     this.sea.setPosition(this.boat.x, this.boat.y);
     this.sea.tilePositionX = this.boat.x;
@@ -1267,7 +1249,7 @@ export class GameScene extends Phaser.Scene {
       0x9b59b6,
       experienceBarRatio
     );
-    const levelText = this.children.getByName("level-text") as Phaser.GameObjects.Text;
+    const levelText = this.children.getByName("level-text") as Phaser.GameObjects.BitmapText;
     if (levelText) levelText.setText(`Niv. ${this.level}`);
 
     if (this.authoritativeGameServer && this.boat && this.localBoatPositionSyncedFromAuthoritativeState) {
@@ -1301,6 +1283,7 @@ export class GameScene extends Phaser.Scene {
     if (this.mobileControlsEnabled) {
       zoom = Math.min(zoom * this.mobileCameraZoomMultiplier, this.mobileCameraZoomUpperCap);
     }
+    zoom = Math.round(zoom * 8) / 8;
     camera.setZoom(zoom);
     this.layoutMobileJoystick();
   }
@@ -1476,14 +1459,13 @@ export class GameScene extends Phaser.Scene {
   private showMobileControlsTutorial(): void {
     if (!this.isSceneActive) return;
     try {
-      const tutorialText = this.add
-        .text(0, 0, "Joystick: one finger   Other finger: shoot (both at once)", {
-          fontFamily: GAME_TEXT_FONT_FAMILY,
-          fontSize: "26px",
-          color: "#1f2d3d",
-          backgroundColor: "rgba(255,255,255,0.82)",
-          padding: { x: 14, y: 8 },
-        })
+      const tutorialText = this.createMsdfBitmapText(
+        0,
+        0,
+        "Joystick: one finger   Other finger: shoot (both at once)",
+        26,
+        "#1f2d3d"
+      )
         .setOrigin(0.5)
         .setDepth(12000);
       this.mobileTutorialHudText = tutorialText;
@@ -1679,16 +1661,12 @@ export class GameScene extends Phaser.Scene {
   }
 
   private upsertPratVisual(id: string, prat: PratState): void {
-    const px = snapToPixel(simulationToPhaserPixels(prat.x));
-    const py = snapToPixel(simulationToPhaserPixels(prat.y));
+    const px = this.snapWorldTextPosition(simulationToPhaserPixels(prat.x));
+    const py = this.snapWorldTextPosition(simulationToPhaserPixels(prat.y));
     const pratDisplayFontSize = pratFontSizePx(prat.fontSize);
     let entity = this.pratEntities.get(id);
     if (!entity) {
-      const text = this.add.text(px, py, prat.word, {
-        fontSize: `${pratDisplayFontSize}px`,
-        fontStyle: prat.fontStyle,
-        color: prat.color,
-      });
+      const text = this.createMsdfBitmapText(px, py, prat.word, pratDisplayFontSize, prat.color);
       text.setOrigin(0.5);
       text.setDepth(3);
       entity = { id, text };
@@ -1699,11 +1677,7 @@ export class GameScene extends Phaser.Scene {
     if (entity.text.text !== prat.word) {
       entity.text.setText(prat.word);
     }
-    entity.text.setStyle({
-      fontSize: `${pratDisplayFontSize}px`,
-      fontStyle: prat.fontStyle,
-      color: prat.color,
-    });
+    this.setMsdfBitmapTextStyle(entity.text, pratDisplayFontSize, prat.color);
   }
 
   private applyServerTownsState(state: SerializableGameState): void {
@@ -1762,8 +1736,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   private upsertTownVisual(id: string, town: TownState): void {
-    const px = snapToPixel(simulationToPhaserPixels(town.x));
-    const py = snapToPixel(simulationToPhaserPixels(town.y));
+    const px = this.snapWorldTextPosition(simulationToPhaserPixels(town.x));
+    const py = this.snapWorldTextPosition(simulationToPhaserPixels(town.y));
     let entity = this.townEntities.get(id);
     const labelText = "T";
     const localPlayerId = this.multiplayer.getPlayerId();
@@ -1772,25 +1746,15 @@ export class GameScene extends Phaser.Scene {
     const color = isOwnedByMe ? TOWN_LETTER_COLOR_LOCAL : isNeutral ? "#000000" : TOWN_LETTER_COLOR_OTHER_OWNER;
     const glowColor = isOwnedByMe ? TOWN_GLOW_COLOR_LOCAL : TOWN_GLOW_COLOR_OTHER_OWNER;
     const ownerDisplayName = this.formatTownOwnerDisplayName(town);
-    const nameLabelY = py - TOWN_OWNER_NAME_OFFSET_ABOVE_LETTER_PX;
+    const nameLabelY = this.snapWorldTextPosition(py - TOWN_OWNER_NAME_OFFSET_ABOVE_LETTER_PX);
 
     if (!entity) {
-      const text = this.add.text(px, py, labelText, {
-        fontFamily: GAME_TEXT_FONT_FAMILY,
-        fontSize: "46px",
-        fontStyle: "bold",
-        color: "#000000",
-      });
+      const text = this.createMsdfBitmapText(px, py, labelText, 46, "#000000");
       text.setOrigin(0.5);
       text.setDepth(9);
       text.setAlpha(1);
 
-      const nameLabel = this.add.text(px, nameLabelY, ownerDisplayName, {
-        fontFamily: GAME_TEXT_FONT_FAMILY,
-        fontSize: "14px",
-        fontStyle: "bold",
-        color: "#000000",
-      });
+      const nameLabel = this.createMsdfBitmapText(px, nameLabelY, ownerDisplayName, 14, "#000000");
       nameLabel.setOrigin(0.5, 1);
       nameLabel.setDepth(10);
 
@@ -1813,7 +1777,7 @@ export class GameScene extends Phaser.Scene {
     px: number,
     py: number,
     letterColor: string,
-    glowColor: string,
+    _glowColor: string,
     isNeutral: boolean,
     ownerDisplayName: string,
     nameLabelY: number,
@@ -1825,26 +1789,14 @@ export class GameScene extends Phaser.Scene {
 
     if (isNeutral) {
       entity.text.setAlpha(1);
-      entity.text.setStyle({
-        fontFamily: GAME_TEXT_FONT_FAMILY,
-        fontSize: "46px",
-        fontStyle: "bold",
-        color: "#000000",
-      });
-      entity.text.setShadow(0, 0, "#000000", 0, false, false);
+      this.setMsdfBitmapTextStyle(entity.text, 46, "#000000");
       entity.nameLabel.setText("");
       entity.nameLabel.setVisible(false);
       this.drawTownCaptureBar(entity, px, py, town);
       return;
     }
 
-    entity.text.setStyle({
-      fontFamily: GAME_TEXT_FONT_FAMILY,
-      fontSize: "46px",
-      fontStyle: "bold",
-      color: letterColor,
-    });
-    entity.text.setShadow(0, 0, glowColor, 10, true, true);
+    this.setMsdfBitmapTextStyle(entity.text, 46, letterColor);
     entity.text.setAlpha(1);
     this.tweens.add({
       targets: entity.text,
@@ -1857,12 +1809,7 @@ export class GameScene extends Phaser.Scene {
 
     entity.nameLabel.setText(ownerDisplayName);
     entity.nameLabel.setVisible(true);
-    entity.nameLabel.setStyle({
-      fontFamily: GAME_TEXT_FONT_FAMILY,
-      fontSize: "14px",
-      fontStyle: "bold",
-      color: "#000000",
-    });
+    this.setMsdfBitmapTextStyle(entity.nameLabel, 14, "#000000");
     this.drawTownCaptureBar(entity, px, py, town);
   }
 
@@ -1886,15 +1833,7 @@ export class GameScene extends Phaser.Scene {
   private spawnTownCapturedToast(): void {
     if (!this.isSceneActive) return;
     try {
-      const label = this.add
-        .text(this.scale.width / 2, this.scale.height * 0.22, "Captured", {
-          fontFamily: GAME_TEXT_FONT_FAMILY,
-          fontSize: "28px",
-          fontStyle: "bold",
-          color: "#ffd700",
-          stroke: "#000000",
-          strokeThickness: 4,
-        })
+      const label = this.createMsdfBitmapText(this.scale.width / 2, this.scale.height * 0.22, "Captured", 28, "#ffd700")
         .setOrigin(0.5)
         .setScrollFactor(0)
         .setDepth(1200);
@@ -1998,16 +1937,11 @@ export class GameScene extends Phaser.Scene {
           const adjustedFontSize = projectile.isShortRange ? Math.max(14, Math.round(baseFontSize * 0.65)) : baseFontSize;
           fontSize = `${adjustedFontSize}px`;
         }
-        const projX = snapToPixel(simulationToPhaserPixels(projectile.x));
-        const projY = snapToPixel(simulationToPhaserPixels(projectile.y));
+        const projX = this.snapWorldTextPosition(simulationToPhaserPixels(projectile.x));
+        const projY = this.snapWorldTextPosition(simulationToPhaserPixels(projectile.y));
         let text = this.serverProjectileSprites.get(id);
         if (!text) {
-          text = this.add.text(projX, projY, projectile.letter, {
-            fontFamily: GAME_TEXT_FONT_FAMILY,
-            fontSize,
-            fontStyle: "bold",
-            color: "#000000",
-          });
+          text = this.createMsdfBitmapText(projX, projY, projectile.letter, Number.parseInt(fontSize, 10), "#000000");
           text.setOrigin(0.5);
           text.setDepth(8);
           this.serverProjectileSprites.set(id, text);
@@ -2016,12 +1950,7 @@ export class GameScene extends Phaser.Scene {
           if (text.text !== projectile.letter) {
             text.setText(projectile.letter);
           }
-          text.setStyle({
-            fontFamily: GAME_TEXT_FONT_FAMILY,
-            fontSize,
-            fontStyle: "bold",
-            color: "#000000",
-          });
+          this.setMsdfBitmapTextStyle(text, Number.parseInt(fontSize, 10), "#000000");
         }
       }
       for (const id of Array.from(this.serverProjectileSprites.keys())) {
@@ -2299,14 +2228,7 @@ export class GameScene extends Phaser.Scene {
   private spawnGhostPratFloatingNumber(worldX: number, worldY: number, displayValue: number): void {
     if (!this.isSceneActive) return;
     try {
-      const label = this.add.text(worldX, worldY, String(displayValue), {
-        fontFamily: GAME_TEXT_FONT_FAMILY,
-        fontSize: "32px",
-        fontStyle: "bold",
-        color: "#ffd700",
-        stroke: "#000000",
-        strokeThickness: 3,
-      });
+      const label = this.createMsdfBitmapText(worldX, worldY, String(displayValue), 32, "#ffd700");
       label.setOrigin(0.5, 0.5);
       label.setDepth(13);
       this.tweens.add({

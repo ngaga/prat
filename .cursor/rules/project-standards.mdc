@@ -9,6 +9,7 @@ alwaysApply: true
 
 - Answer the user in French.
 - Write all code comments and documentation (eg. readme, .md) in English.
+- Write all user facing text (DOM, components,...) in English.
 - Do not use emoticons in comments or code.
 
 

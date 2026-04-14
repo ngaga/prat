@@ -568,7 +568,6 @@ export class GameScene extends Phaser.Scene {
         fontSize: "12px",
         color: "#000",
       })
-      .setOrigin(0, 0.5)
       .setScrollFactor(0);
     this.add
       .text(BAR_X + barWidth + 10, experienceY + barHeight / 2, `Niv. ${this.level}`, {
@@ -986,7 +985,7 @@ export class GameScene extends Phaser.Scene {
     const statusText = this.children.getByName("multiplayer-status") as Phaser.GameObjects.Text;
     if (statusText) {
       const n = this.connectedPlayerCount;
-      const label = n === 1 ? "1 joueur" : `${n} joueurs`;
+      const label = n === 1 ? "1 player" : `${n} players`;
       statusText.setText(label);
       statusText.setPosition(this.scale.width - 70, this.multiplayerHudTopPx);
     }

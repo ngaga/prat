@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Prat - Chasse aux Prat en mer",
-  description: "Pilote ton bateau pirate et capture les Prat sur les mers !",
+  title: "Prat",
+  description: "Capture Prats on the ocean!",
 };
 
 export const viewport: Viewport = {

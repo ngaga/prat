@@ -21,19 +21,15 @@ export class MenuScene extends Phaser.Scene {
     titleElement.style.cssText = `font-family: ${MENU_TEXT_FONT_FAMILY}; font-size: 64px; font-weight: 700; color: #000; line-height: 1; text-align: center;`;
     this.add.dom(centerX, centerY - 100, titleElement);
 
-    const subtitleElement = document.createElement("div");
-    subtitleElement.textContent = "Chasse aux Prat en mer";
-    subtitleElement.style.cssText = `font-family: ${MENU_TEXT_FONT_FAMILY}; font-size: 20px; color: #333; line-height: 1.2; text-align: center;`;
-    this.add.dom(centerX, centerY - 30, subtitleElement);
 
     const nameLabelElement = document.createElement("div");
-    nameLabelElement.textContent = "Entre ton nom";
+    nameLabelElement.textContent = "Enter your name";
     nameLabelElement.style.cssText = `font-family: ${MENU_TEXT_FONT_FAMILY}; font-size: 18px; color: #333; line-height: 1.2; text-align: center;`;
     this.add.dom(centerX, centerY + 10, nameLabelElement);
 
     const nameInput = document.createElement("input");
     nameInput.type = "text";
-    nameInput.placeholder = "Ton nom";
+    nameInput.placeholder = "Your name";
     nameInput.maxLength = MAX_PLAYER_NAME_LENGTH;
     nameInput.style.cssText =
       `width: 220px; height: 40px; font-size: 18px; font-family: ${MENU_TEXT_FONT_FAMILY}; padding: 8px; border: 2px solid #333; text-align: center; pointer-events: auto;`;
@@ -50,7 +46,7 @@ export class MenuScene extends Phaser.Scene {
 
     const playButtonElement = document.createElement("button");
     playButtonElement.type = "button";
-    playButtonElement.textContent = "Jouer";
+    playButtonElement.textContent = "Play";
     playButtonElement.style.cssText = `width: ${playButtonWidth}px; height: ${playButtonHeight}px; border: 0; border-radius: 8px; background: #333; color: #fff; font-family: ${MENU_TEXT_FONT_FAMILY}; font-size: 32px; line-height: 1; cursor: pointer;`;
     playButtonElement.addEventListener("mouseenter", () => {
       playButtonElement.style.background = "#555";
@@ -68,7 +64,7 @@ export class MenuScene extends Phaser.Scene {
     const submitPlay = (): void => {
       const name = (nameInputDom.node as HTMLInputElement).value.trim();
       if (!name) {
-        errorTextElement.textContent = "Entre ton nom pour jouer";
+        errorTextElement.textContent = "Enter your name to play";
         this.tweens.add({
           targets: errorText,
           alpha: 0.3,

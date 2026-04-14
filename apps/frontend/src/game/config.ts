@@ -6,10 +6,20 @@ export const MAX_PLAYER_NAME_LENGTH = 20;
 
 export { VIEW_HEIGHT, VIEW_WIDTH };
 
+const DEVICE_PIXEL_RATIO =
+  typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
+const RENDER_RESOLUTION = Phaser.Math.Clamp(DEVICE_PIXEL_RATIO, 1, 2);
+
 export const gameConfig: Types.Core.GameConfig = {
   type: Phaser.AUTO,
   parent: "game-container",
   backgroundColor: "#ffffff",
+  resolution: RENDER_RESOLUTION,
+  render: {
+    antialias: true,
+    pixelArt: false,
+    roundPixels: true,
+  },
   scale: {
     mode: Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.CENTER_BOTH,

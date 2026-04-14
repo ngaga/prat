@@ -138,6 +138,7 @@ function nameLabelOffsetAboveBoatForScale(scale: number): number {
 
 const BOAT_NAME_FONT_SIZE_BASE_PX = 12;
 const BOAT_NAME_FONT_SIZE_MAX_PX = 28;
+const PRAT_TEXT_SIZE_MULTIPLIER = 1.08;
 
 function boatNameFontSizePxForScale(scale: number): number {
   const ratio = scale / BOAT_DISPLAY_SCALE_BASE;
@@ -146,6 +147,14 @@ function boatNameFontSizePxForScale(scale: number): number {
     BOAT_NAME_FONT_SIZE_BASE_PX,
     BOAT_NAME_FONT_SIZE_MAX_PX
   );
+}
+
+function snapToPixel(value: number): number {
+  return Math.round(value);
+}
+
+function pratFontSizePx(fontSize: number): number {
+  return Math.max(12, Math.round(fontSize * PRAT_TEXT_SIZE_MULTIPLIER));
 }
 
 const PLAYER_PROJECTILE_FONT_BASE_PX = 28;
@@ -293,8 +302,8 @@ export class GameScene extends Phaser.Scene {
   private mobileJoystickMaxThumbOffsetPixels = 35;
   private mobileJoystickDeadZonePixels = 6;
   private readonly mobileJoystickMoveLeadDistancePixels = 200;
-  /** Closer world view on touch-only layout (desktop zoom is unchanged). ~2x fit was requested; cap avoids extreme crop on tall phones. */
-  private readonly mobileCameraZoomMultiplier = 2;
+  /** Closer world view on touch-only layout (desktop zoom is unchanged). Keep this moderate to avoid blurry upscaling on mobile displays. */
+  private readonly mobileCameraZoomMultiplier = 1.6;
   private readonly mobileCameraZoomUpperCap = 3.25;
   private readonly mobileJoystickWorldScratch = new Phaser.Math.Vector2();
   /** Short-lived; kept so we can pin it to the viewport while the camera moves. */
@@ -430,6 +439,7 @@ export class GameScene extends Phaser.Scene {
     this.boatNameLabel.setAlpha(0);
 
     this.cameras.main.setBounds(-WORLD_SIZE, -WORLD_SIZE, WORLD_SIZE * 2, WORLD_SIZE * 2);
+    this.cameras.main.roundPixels = true;
     this.updateCameraZoom();
     this.scale.on("resize", this.updateCameraZoom, this);
 
@@ -1637,12 +1647,13 @@ export class GameScene extends Phaser.Scene {
   }
 
   private upsertPratVisual(id: string, prat: PratState): void {
-    const px = simulationToPhaserPixels(prat.x);
-    const py = simulationToPhaserPixels(prat.y);
+    const px = snapToPixel(simulationToPhaserPixels(prat.x));
+    const py = snapToPixel(simulationToPhaserPixels(prat.y));
+    const pratDisplayFontSize = pratFontSizePx(prat.fontSize);
     let entity = this.pratEntities.get(id);
     if (!entity) {
       const text = this.add.text(px, py, prat.word, {
-        fontSize: `${prat.fontSize}px`,
+        fontSize: `${pratDisplayFontSize}px`,
         fontStyle: prat.fontStyle,
         color: prat.color,
       });
@@ -1657,7 +1668,7 @@ export class GameScene extends Phaser.Scene {
       entity.text.setText(prat.word);
     }
     entity.text.setStyle({
-      fontSize: `${prat.fontSize}px`,
+      fontSize: `${pratDisplayFontSize}px`,
       fontStyle: prat.fontStyle,
       color: prat.color,
     });
@@ -1938,8 +1949,8 @@ export class GameScene extends Phaser.Scene {
           const adjustedFontSize = projectile.isShortRange ? Math.max(14, Math.round(baseFontSize * 0.65)) : baseFontSize;
           fontSize = `${adjustedFontSize}px`;
         }
-        const projX = simulationToPhaserPixels(projectile.x);
-        const projY = simulationToPhaserPixels(projectile.y);
+        const projX = snapToPixel(simulationToPhaserPixels(projectile.x));
+        const projY = snapToPixel(simulationToPhaserPixels(projectile.y));
         let text = this.serverProjectileSprites.get(id);
         if (!text) {
           text = this.add.text(projX, projY, projectile.letter, {

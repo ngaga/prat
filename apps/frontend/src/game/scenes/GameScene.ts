@@ -330,6 +330,7 @@ export class GameScene extends Phaser.Scene {
   private mobileTutorialHudText: Phaser.GameObjects.BitmapText | null = null;
   /** Continuous HUD pointer toward boss while it exists. */
   private bossDirectionArrow: Phaser.GameObjects.Triangle | null = null;
+  private bossDirectionLabel: Phaser.GameObjects.BitmapText | null = null;
   private bossWorldTargetX: number | null = null;
   private bossWorldTargetY: number | null = null;
 
@@ -762,6 +763,8 @@ export class GameScene extends Phaser.Scene {
     this.deathPratOverlayRoot = null;
     this.bossDirectionArrow?.destroy();
     this.bossDirectionArrow = null;
+    this.bossDirectionLabel?.destroy();
+    this.bossDirectionLabel = null;
     this.bossWorldTargetX = null;
     this.bossWorldTargetY = null;
   }
@@ -839,7 +842,13 @@ export class GameScene extends Phaser.Scene {
       .rectangle(width / 2, height / 2, width + 8, height + 8, 0x000000)
       .setAlpha(1);
     const fontPixels = Math.min(width, height) * 0.2;
-    const label = this.createMsdfBitmapText(width / 2, height / 2, options.labelText, Math.round(fontPixels), "#ffffff")
+    const label = this.add
+      .text(width / 2, height / 2, options.labelText, {
+        fontFamily: "Arial, sans-serif",
+        fontSize: `${Math.round(fontPixels)}px`,
+        fontStyle: "700",
+        color: "#ffffff",
+      })
       .setOrigin(0.5)
       .setAlpha(1);
     label.setScale(0.32);
@@ -1511,20 +1520,29 @@ export class GameScene extends Phaser.Scene {
     arrow.setStrokeStyle(2, 0xffffff, 0.75);
     arrow.setVisible(false);
     this.bossDirectionArrow = arrow;
+    const label = this.createMsdfBitmapText(0, 0, "BOSS", 20, "#aa1111");
+    label.setScrollFactor(0);
+    label.setDepth(1601);
+    label.setOrigin(0.5, 0.5);
+    label.setVisible(false);
+    this.bossDirectionLabel = label;
   }
 
   private updateBossDirectionArrow(): void {
     if (!this.boat) return;
     this.ensureBossDirectionArrowExists();
     const arrow = this.bossDirectionArrow;
+    const label = this.bossDirectionLabel;
     if (!arrow) return;
     if (this.bossWorldTargetX === null || this.bossWorldTargetY === null) {
       arrow.setVisible(false);
+      label?.setVisible(false);
       return;
     }
     const camera = this.cameras.main;
     if (camera.worldView.contains(this.bossWorldTargetX, this.bossWorldTargetY)) {
       arrow.setVisible(false);
+      label?.setVisible(false);
       return;
     }
     const directionX = this.bossWorldTargetX - this.boat.x;
@@ -1532,6 +1550,7 @@ export class GameScene extends Phaser.Scene {
     const length = Math.sqrt(directionX * directionX + directionY * directionY);
     if (length < 0.001) {
       arrow.setVisible(false);
+      label?.setVisible(false);
       return;
     }
     const normalizedDirectionX = directionX / length;
@@ -1554,6 +1573,16 @@ export class GameScene extends Phaser.Scene {
     );
     arrow.setRotation(Math.atan2(normalizedDirectionY, normalizedDirectionX));
     arrow.setVisible(true);
+    if (label) {
+      const labelOffsetPixels = 34;
+      const labelX = arrow.x - normalizedDirectionX * labelOffsetPixels;
+      const labelY = arrow.y - normalizedDirectionY * labelOffsetPixels;
+      label.setPosition(
+        Phaser.Math.Clamp(labelX, 24, this.scale.width - 24),
+        Phaser.Math.Clamp(labelY, 24, this.scale.height - 24)
+      );
+      label.setVisible(true);
+    }
   }
 
   private applyServerGameState(state: SerializableGameState): void {

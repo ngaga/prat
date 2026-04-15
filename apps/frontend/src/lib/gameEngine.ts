@@ -90,6 +90,7 @@ const STINGRAY_VENGEANCE_DURATION_MS = 10_000;
 const STINGRAY_VENGEANCE_SPEED_MULTIPLIER = 2.2;
 const STINGRAY_VENGEANCE_TRIGGER_COOLDOWN_MS = 4_000;
 const STINGRAY_VENGEANCE_SPAWN_OFFSET_FROM_KILLER_X = 550;
+const STINGRAY_VENGEANCE_PASSENGER_LIFE_LOSS_PER_SECOND = STINGRAY_PASSENGER_LIFE_PER_SECOND;
 
 const LETTER_SPEED_SIMULATION_UNITS_PER_SECOND = PLAYER_LETTER_SPEED_SIMULATION_UNITS_PER_SECOND;
 const LETTER_DAMAGE = LETTER_DAMAGE_SIMULATION_UNITS;
@@ -913,23 +914,15 @@ export class GameRoom {
       const vengeanceEndsAtTimestamp = stingray.vengeanceEndsAtTimestamp ?? 0;
       const inVengeanceMode = targetPlayerId !== undefined && now <= vengeanceEndsAtTimestamp;
       if (inVengeanceMode) {
-        const targetPlayer = this.players.get(targetPlayerId);
-        if (targetPlayer && !targetPlayer.isGhost) {
-          const directionX = Math.sign(targetPlayer.x - stingray.x);
-          if (directionX !== 0) {
-            const stepDistance =
-              STINGRAY_SPEED_SIMULATION_UNITS_PER_SECOND *
-              STINGRAY_VENGEANCE_SPEED_MULTIPLIER *
-              deltaSeconds;
-            stingray.x = clampWorld(stingray.x + directionX * stepDistance);
-          }
-          // Keep fixed lane height during vengeance charge.
-          stingray.y = stingray.baseY;
-        } else {
-          stingray.vengeanceTargetPlayerId = undefined;
-          stingray.vengeanceEndsAtTimestamp = undefined;
-          stingray.baseY = stingray.y;
-          stingray.spawnTime = now;
+        stingray.x += STINGRAY_SPEED_SIMULATION_UNITS_PER_SECOND * deltaSeconds;
+        const elapsedSeconds = (now - stingray.spawnTime) / 1000;
+        stingray.y =
+          stingray.baseY +
+          STINGRAY_AMPLITUDE_SIMULATION_UNITS * Math.sin(2 * Math.PI * STINGRAY_WAVE_FREQUENCY * elapsedSeconds);
+        const reachedMapEdgeOnXAxis = stingray.x <= WORLD_X_MIN || stingray.x >= WORLD_X_MAX;
+        if (reachedMapEdgeOnXAxis) {
+          toRemove.push(stingray.id);
+          continue;
         }
       } else {
         if (targetPlayerId !== undefined) {
@@ -1076,11 +1069,37 @@ export class GameRoom {
 
     const deltaSeconds = GAME_LOOP_INTERVAL_MS / 1000;
     const healThisTick = STINGRAY_PASSENGER_LIFE_PER_SECOND * deltaSeconds;
+    const damageThisTick = STINGRAY_VENGEANCE_PASSENGER_LIFE_LOSS_PER_SECOND * deltaSeconds;
     for (const [playerId, passenger] of this.players) {
       if (passenger.isGhost) continue;
       const carryingStingrayId = passenger.attachedStingrayId;
       if (carryingStingrayId === undefined || !stingrayIds.has(carryingStingrayId)) continue;
+      const carryingStingray = this.stingrays.get(carryingStingrayId);
+      if (!carryingStingray) continue;
       const currentLife = passenger.life ?? MAX_LIFE;
+      const isVengeanceStingray =
+        typeof carryingStingray.vengeanceTargetPlayerId === "string" &&
+        carryingStingray.vengeanceTargetPlayerId.length > 0;
+      if (isVengeanceStingray) {
+        const nextLife = Math.max(0, currentLife - damageThisTick);
+        if (currentLife > 0 && nextLife <= 0) {
+          this.players.set(playerId, {
+            ...passenger,
+            life: MAX_LIFE,
+            isGhost: true,
+            ghostPratsCaptured: 0,
+            attachedStingrayId: undefined,
+            stingrayEscapeSalvoHits: 0,
+            stingrayEscapeLastCountedSalvoId: undefined,
+          });
+          continue;
+        }
+        this.players.set(playerId, {
+          ...passenger,
+          life: nextLife,
+        });
+        continue;
+      }
       if (currentLife >= MAX_LIFE) continue;
       this.players.set(playerId, {
         ...passenger,
@@ -1267,7 +1286,9 @@ export class GameRoom {
         }
 
         if (stingray.life <= 0) {
-          const shouldSpawnVengeanceHerd = stingray.vengeanceTargetPlayerId === undefined;
+          const hasVengeanceTag =
+            typeof stingray.vengeanceTargetPlayerId === "string" && stingray.vengeanceTargetPlayerId.length > 0;
+          const shouldSpawnVengeanceHerd = !hasVengeanceTag;
           this.detachPlayersFromStingray(stingrayId);
           this.stingrays.delete(stingrayId);
           if (shouldSpawnVengeanceHerd) {

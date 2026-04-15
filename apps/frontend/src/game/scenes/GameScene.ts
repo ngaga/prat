@@ -64,6 +64,7 @@ interface StingrayEntity {
   rayMaxLife: number;
   baseY: number;
   spawnTime: number;
+  isVengeance: boolean;
   /** When local player rides this ray, sprite eases toward these display coordinates (SSE targets). */
   authoritativeWorldX?: number;
   authoritativeWorldY?: number;
@@ -2137,6 +2138,8 @@ export class GameScene extends Phaser.Scene {
         const rayX = snapToPixel(simulationToPhaserPixels(ray.x));
         const rayY = snapToPixel(simulationToPhaserPixels(ray.y));
         const isLocalCarrier = id === this.localAttachedStingrayId;
+        const isVengeance =
+          typeof ray.vengeanceTargetPlayerId === "string" && ray.vengeanceTargetPlayerId.length > 0;
         let entity = this.stingrays.get(id);
         const maxLife = ray.maxLife > 0 ? ray.maxLife : STINGRAY_LIFE;
         if (!entity) {
@@ -2153,6 +2156,7 @@ export class GameScene extends Phaser.Scene {
             rayMaxLife: maxLife,
             baseY: ray.baseY,
             spawnTime: ray.spawnTime,
+            isVengeance,
           };
           if (isLocalCarrier) {
             entity.authoritativeWorldX = rayX;
@@ -2164,6 +2168,7 @@ export class GameScene extends Phaser.Scene {
           entity.rayMaxLife = maxLife;
           entity.baseY = ray.baseY;
           entity.spawnTime = ray.spawnTime;
+          entity.isVengeance = isVengeance;
           if (isLocalCarrier) {
             entity.authoritativeWorldX = rayX;
             entity.authoritativeWorldY = rayY;
@@ -2173,11 +2178,25 @@ export class GameScene extends Phaser.Scene {
             entity.sprite.setPosition(snapToPixel(rayX), snapToPixel(rayY));
           }
         }
+        if (isVengeance) {
+          entity.sprite.setTint(0xcc2222);
+        } else {
+          entity.sprite.setTint(0x00aa00);
+        }
         const lifeRatio = ray.life / maxLife;
         entity.lifeBar.clear();
         const barCenterX = isLocalCarrier ? entity.sprite.x : rayX;
         const barCenterY = isLocalCarrier ? entity.sprite.y : rayY;
-        this.drawBar(entity.lifeBar, barCenterX - 20, barCenterY - 35, 40, 5, 0x333333, 0xff6600, lifeRatio);
+        this.drawBar(
+          entity.lifeBar,
+          barCenterX - 20,
+          barCenterY - 35,
+          40,
+          5,
+          0x333333,
+          0xff3333,
+          lifeRatio
+        );
       }
       for (const id of Array.from(this.stingrays.keys())) {
         if (!seenIds.has(id)) {
@@ -2301,7 +2320,7 @@ export class GameScene extends Phaser.Scene {
         40,
         5,
         0x333333,
-        0xff6600,
+        0xff3333,
         lifeRatio
       );
     }

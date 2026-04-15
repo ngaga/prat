@@ -192,4 +192,8 @@ export interface StingrayState {
   maxLife: number;
   baseY: number;
   spawnTime: number;
+  /** Optional: this stingray temporarily chases this player id. */
+  vengeanceTargetPlayerId?: string;
+  /** Optional: timestamp (ms) after which chase mode is disabled. */
+  vengeanceEndsAtTimestamp?: number;
 }

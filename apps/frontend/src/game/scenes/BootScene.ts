@@ -6,6 +6,10 @@ const UI_MSDF_TEXTURE_PATH = "/fonts/ui-msdf.png";
 const UI_MSDF_DATA_PATH = "/fonts/ui-msdf.fnt";
 const UI_MSDF_PIPELINE_KEY = "uiMsdfPipeline";
 const UI_MSDF_FRAGMENT_SHADER = `
+#ifdef GL_OES_standard_derivatives
+#extension GL_OES_standard_derivatives : enable
+#endif
+
 precision mediump float;
 
 uniform sampler2D uMainSampler;
@@ -19,9 +23,15 @@ float median(float red, float green, float blue) {
 void main() {
   vec4 sampledColor = texture2D(uMainSampler, outTexCoord);
   float signedDistance = median(sampledColor.r, sampledColor.g, sampledColor.b);
-  float smoothing = 0.1;
-  float weightBias = 0.08;
-  float alpha = smoothstep((0.5 - weightBias) - smoothing, (0.5 - weightBias) + smoothing, signedDistance);
+
+  // Slightly heavier glyphs and adaptive anti-aliasing reduce blocky edges at large sizes.
+  float weightBias = 0.06;
+  float smoothing = 0.08;
+#ifdef GL_OES_standard_derivatives
+  smoothing = max(smoothing, fwidth(signedDistance) * 1.5);
+#endif
+  float threshold = 0.5 - weightBias;
+  float alpha = smoothstep(threshold - smoothing, threshold + smoothing, signedDistance);
   gl_FragColor = vec4(outTint.rgb, outTint.a * alpha);
 }
 `;

@@ -85,6 +85,11 @@ const STINGRAY_WAVE_FREQUENCY = 0.5;
 const STINGRAY_SPAWN_INTERVAL_MS = 4000;
 /** Wrapped rays no longer despawn at the east edge, so cap count or spawns would grow without limit. */
 const MAX_STINGRAYS_IN_WORLD = 6;
+const STINGRAY_VENGEANCE_HERD_SIZE = 16;
+const STINGRAY_VENGEANCE_DURATION_MS = 10_000;
+const STINGRAY_VENGEANCE_SPEED_MULTIPLIER = 2.2;
+const STINGRAY_VENGEANCE_TRIGGER_COOLDOWN_MS = 4_000;
+const STINGRAY_VENGEANCE_SPAWN_OFFSET_FROM_KILLER_X = 550;
 
 const LETTER_SPEED_SIMULATION_UNITS_PER_SECOND = PLAYER_LETTER_SPEED_SIMULATION_UNITS_PER_SECOND;
 const LETTER_DAMAGE = LETTER_DAMAGE_SIMULATION_UNITS;
@@ -232,6 +237,7 @@ export class GameRoom {
   private lastAcceptedMoveClientWallTimestamp = new Map<string, number>();
   private nextBossSpawnAtLevelSum = LEVEL_SUM_PER_BOSS_SPAWN;
   private bossDamageByPlayerId = new Map<string, number>();
+  private lastVengeanceHerdSpawnAtByKillerId = new Map<string, number>();
 
   constructor(roomId: string) {
     this.roomId = roomId;
@@ -903,12 +909,42 @@ export class GameRoom {
     }
 
     for (const stingray of this.stingrays.values()) {
-      stingray.x += STINGRAY_SPEED_SIMULATION_UNITS_PER_SECOND * deltaSeconds;
-      stingray.x = wrapPlayableX(stingray.x);
-      const elapsedSeconds = (now - stingray.spawnTime) / 1000;
-      stingray.y =
-        stingray.baseY +
-        STINGRAY_AMPLITUDE_SIMULATION_UNITS * Math.sin(2 * Math.PI * STINGRAY_WAVE_FREQUENCY * elapsedSeconds);
+      const targetPlayerId = stingray.vengeanceTargetPlayerId;
+      const vengeanceEndsAtTimestamp = stingray.vengeanceEndsAtTimestamp ?? 0;
+      const inVengeanceMode = targetPlayerId !== undefined && now <= vengeanceEndsAtTimestamp;
+      if (inVengeanceMode) {
+        const targetPlayer = this.players.get(targetPlayerId);
+        if (targetPlayer && !targetPlayer.isGhost) {
+          const directionX = Math.sign(targetPlayer.x - stingray.x);
+          if (directionX !== 0) {
+            const stepDistance =
+              STINGRAY_SPEED_SIMULATION_UNITS_PER_SECOND *
+              STINGRAY_VENGEANCE_SPEED_MULTIPLIER *
+              deltaSeconds;
+            stingray.x = clampWorld(stingray.x + directionX * stepDistance);
+          }
+          // Keep fixed lane height during vengeance charge.
+          stingray.y = stingray.baseY;
+        } else {
+          stingray.vengeanceTargetPlayerId = undefined;
+          stingray.vengeanceEndsAtTimestamp = undefined;
+          stingray.baseY = stingray.y;
+          stingray.spawnTime = now;
+        }
+      } else {
+        if (targetPlayerId !== undefined) {
+          stingray.vengeanceTargetPlayerId = undefined;
+          stingray.vengeanceEndsAtTimestamp = undefined;
+          stingray.baseY = stingray.y;
+          stingray.spawnTime = now;
+        }
+        stingray.x += STINGRAY_SPEED_SIMULATION_UNITS_PER_SECOND * deltaSeconds;
+        stingray.x = wrapPlayableX(stingray.x);
+        const elapsedSeconds = (now - stingray.spawnTime) / 1000;
+        stingray.y =
+          stingray.baseY +
+          STINGRAY_AMPLITUDE_SIMULATION_UNITS * Math.sin(2 * Math.PI * STINGRAY_WAVE_FREQUENCY * elapsedSeconds);
+      }
       if (stingray.life <= 0) {
         if (this.stingrayHasPassenger(stingray.id)) {
           stingray.life = 1;
@@ -1070,6 +1106,37 @@ export class GameRoom {
     });
   }
 
+  private spawnVengeanceStingrayHerdAtKiller(killerId: string, now: number): void {
+    const killer = this.players.get(killerId);
+    if (!killer || killer.isGhost) return;
+    const lastSpawnAt = this.lastVengeanceHerdSpawnAtByKillerId.get(killerId) ?? 0;
+    if (now - lastSpawnAt < STINGRAY_VENGEANCE_TRIGGER_COOLDOWN_MS) return;
+    this.lastVengeanceHerdSpawnAtByKillerId.set(killerId, now);
+    const spawnX = clampWorld(killer.x - STINGRAY_VENGEANCE_SPAWN_OFFSET_FROM_KILLER_X);
+    const minY = -WORLD_SIZE + WORLD_MARGIN;
+    const maxY = WORLD_SIZE - WORLD_MARGIN;
+    const verticalSpan = 1000;
+    const startY = killer.y - verticalSpan / 2;
+    const stepY = STINGRAY_VENGEANCE_HERD_SIZE > 1 ? verticalSpan / (STINGRAY_VENGEANCE_HERD_SIZE - 1) : 0;
+    for (let index = 0; index < STINGRAY_VENGEANCE_HERD_SIZE; index++) {
+      const id = `stingray-${this.nextStingrayId++}`;
+      const spawnY = clampWorld(
+        Math.min(maxY, Math.max(minY, startY + stepY * index + (Math.random() * 36 - 18)))
+      );
+      this.stingrays.set(id, {
+        id,
+        x: spawnX,
+        y: spawnY,
+        life: STINGRAY_LIFE,
+        maxLife: STINGRAY_LIFE,
+        baseY: spawnY,
+        spawnTime: now,
+        vengeanceTargetPlayerId: killerId,
+        vengeanceEndsAtTimestamp: now + STINGRAY_VENGEANCE_DURATION_MS,
+      });
+    }
+  }
+
   private updateProjectiles(now: number): void {
     const deltaSeconds = GAME_LOOP_INTERVAL_MS / 1000;
     const toRemove: string[] = [];
@@ -1200,8 +1267,12 @@ export class GameRoom {
         }
 
         if (stingray.life <= 0) {
+          const shouldSpawnVengeanceHerd = stingray.vengeanceTargetPlayerId === undefined;
           this.detachPlayersFromStingray(stingrayId);
           this.stingrays.delete(stingrayId);
+          if (shouldSpawnVengeanceHerd) {
+            this.spawnVengeanceStingrayHerdAtKiller(projectile.shooterId, hitTime);
+          }
           const shooter = this.players.get(projectile.shooterId);
           if (shooter && !shooter.isGhost) {
             shooter.experience = (shooter.experience ?? 0) + XP_PER_OCTOPUS_OR_STINGRAY;

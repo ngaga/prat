@@ -72,6 +72,12 @@ const OCTOPUS_SHOOT_INTERVAL_MS = 3000;
 const OCTOPUS_SPAWN_CHECK_INTERVAL_MS = 3000;
 const OCTOPUS_SPAWN_PROBABILITY = 1 / 3;
 const MAX_OCTOPUSES_IN_WORLD = 8;
+const BOSS_IDENTIFIER_PREFIX = "boss-";
+const BOSS_MAX_LIFE = 1500;
+const LEVEL_SUM_PER_BOSS_SPAWN = 10;
+const BOSS_EXPERIENCE_POOL = 1200;
+const BOSS_PROJECTILE_DAMAGE = 20;
+const BOSS_SHOOT_INTERVAL_MS = Math.max(1, Math.floor(OCTOPUS_SHOOT_INTERVAL_MS / 3));
 const ROOM_EMPTY_CLEANUP_MS = 120_000;
 /** High enough that escape-by-salvos completes before typical death (5 salvos x 4 letters x damage). */
 const STINGRAY_LIFE = 600;
@@ -187,6 +193,10 @@ function projectileIsFromOctopus(projectile: ServerProjectile): boolean {
   return projectile.shooterId.startsWith("octopus:");
 }
 
+function enemyIsBoss(enemyId: string): boolean {
+  return enemyId.startsWith(BOSS_IDENTIFIER_PREFIX);
+}
+
 export class GameRoom {
   readonly roomId: string;
   private players = new Map<string, PlayerState>();
@@ -220,6 +230,8 @@ export class GameRoom {
   private eliminationEventsForBroadcast: EliminationEvent[] = [];
   /** Ignore MOVE inputs older than the last applied one (out-of-order HTTP responses). */
   private lastAcceptedMoveClientWallTimestamp = new Map<string, number>();
+  private nextBossSpawnAtLevelSum = LEVEL_SUM_PER_BOSS_SPAWN;
+  private bossDamageByPlayerId = new Map<string, number>();
 
   constructor(roomId: string) {
     this.roomId = roomId;
@@ -620,6 +632,7 @@ export class GameRoom {
     const shooterId = octopusProjectileShooterId(enemy.id);
     const speed = LETTER_SPEED_SIMULATION_UNITS_PER_SECOND * OCTOPUS_PROJECTILE_SPEED_FACTOR;
     const salvoId = `salvo-${this.nextProjectileId}`;
+    const enemyProjectileDamage = enemyIsBoss(enemy.id) ? BOSS_PROJECTILE_DAMAGE : OCTOPUS_PROJECTILE_DAMAGE;
 
     for (let letterIndex = 0; letterIndex < PRAT_LETTERS.length; letterIndex++) {
       const id = `proj-${this.nextProjectileId++}`;
@@ -633,7 +646,7 @@ export class GameRoom {
         directionX,
         directionY,
         speed,
-        damage: OCTOPUS_PROJECTILE_DAMAGE,
+        damage: enemyProjectileDamage,
         letter: PRAT_LETTERS[letterIndex],
         salvoReleaseTime: now + letterIndex * SALVO_LETTER_DELAY_MS,
         salvoId,
@@ -726,6 +739,78 @@ export class GameRoom {
     this.pendingEliminations.length = 0;
   }
 
+  private sumOfAllPlayerLevels(): number {
+    let sum = 0;
+    for (const player of this.players.values()) {
+      sum += Math.max(1, Math.floor(player.level ?? 1));
+    }
+    return sum;
+  }
+
+  private getActiveBossEnemyId(): string | null {
+    for (const [enemyId] of this.enemies) {
+      if (enemyIsBoss(enemyId)) return enemyId;
+    }
+    return null;
+  }
+
+  private maybeSpawnBoss(now: number): void {
+    const existingBossId = this.getActiveBossEnemyId();
+    if (existingBossId) return;
+    const levelSum = this.sumOfAllPlayerLevels();
+    if (levelSum < this.nextBossSpawnAtLevelSum) return;
+    const spawnPoint = randomInWorld();
+    const bossId = `${BOSS_IDENTIFIER_PREFIX}${this.nextEnemyId++}`;
+    this.enemies.set(bossId, {
+      id: bossId,
+      x: spawnPoint.x,
+      y: spawnPoint.y,
+      life: BOSS_MAX_LIFE,
+      maxLife: BOSS_MAX_LIFE,
+      velocityX: 0,
+      velocityY: 0,
+      lastShotTime: 0,
+      spawnTime: now,
+    });
+    this.bossDamageByPlayerId.clear();
+    while (levelSum >= this.nextBossSpawnAtLevelSum) {
+      this.nextBossSpawnAtLevelSum += LEVEL_SUM_PER_BOSS_SPAWN;
+    }
+  }
+
+  private recordBossDamage(playerId: string, damage: number): void {
+    if (damage <= 0) return;
+    const previous = this.bossDamageByPlayerId.get(playerId) ?? 0;
+    this.bossDamageByPlayerId.set(playerId, previous + damage);
+  }
+
+  private grantBossExperienceByDamageShare(lastAttackerId: string): void {
+    const damageEntries = [...this.bossDamageByPlayerId.entries()].filter((entry) => entry[1] > 0);
+    const totalDamage = damageEntries.reduce((sum, [, damage]) => sum + damage, 0);
+    if (totalDamage <= 0) {
+      const fallbackAttacker = this.players.get(lastAttackerId);
+      if (fallbackAttacker && !fallbackAttacker.isGhost) {
+        fallbackAttacker.experience = (fallbackAttacker.experience ?? 0) + BOSS_EXPERIENCE_POOL;
+        fallbackAttacker.level = getLevelFromExperience(fallbackAttacker.experience);
+        this.players.set(lastAttackerId, fallbackAttacker);
+      }
+      this.bossDamageByPlayerId.clear();
+      return;
+    }
+    for (const [playerId, playerDamage] of damageEntries) {
+      const player = this.players.get(playerId);
+      if (!player || player.isGhost) continue;
+      const proportionalExperience = Math.max(
+        1,
+        Math.round((BOSS_EXPERIENCE_POOL * playerDamage) / totalDamage)
+      );
+      player.experience = (player.experience ?? 0) + proportionalExperience;
+      player.level = getLevelFromExperience(player.experience);
+      this.players.set(playerId, player);
+    }
+    this.bossDamageByPlayerId.clear();
+  }
+
   private updateTowns(now: number): void {
     for (const town of this.towns.values()) {
       const isWildTown = !town.ownerId;
@@ -765,18 +850,19 @@ export class GameRoom {
 
     const toRemoveEnemy: string[] = [];
     for (const enemy of this.enemies.values()) {
-      if (now - enemy.spawnTime >= OCTOPUS_LIFETIME_MS) {
+      if (!enemyIsBoss(enemy.id) && now - enemy.spawnTime >= OCTOPUS_LIFETIME_MS) {
         toRemoveEnemy.push(enemy.id);
         continue;
       }
       enemy.x += enemy.velocityX * (GAME_LOOP_INTERVAL_MS / 1000);
       enemy.y += enemy.velocityY * (GAME_LOOP_INTERVAL_MS / 1000);
 
+      const enemyShootInterval = enemyIsBoss(enemy.id) ? BOSS_SHOOT_INTERVAL_MS : OCTOPUS_SHOOT_INTERVAL_MS;
       const playerTarget = nearestPlayer(enemy.x, enemy.y, this.players);
       if (
         playerTarget &&
         now - enemy.spawnTime >= OCTOPUS_SHOOT_DELAY_MS &&
-        now - enemy.lastShotTime >= OCTOPUS_SHOOT_INTERVAL_MS
+        now - enemy.lastShotTime >= enemyShootInterval
       ) {
         enemy.lastShotTime = now;
         this.spawnOctopusSalvo(enemy, playerTarget, now);
@@ -795,6 +881,7 @@ export class GameRoom {
       this.lastOctopusSpawnCheckTime = now;
       this.spawnEnemy(now);
     }
+    this.maybeSpawnBoss(now);
   }
 
   private updateStingrays(now: number): void {
@@ -1030,6 +1117,9 @@ export class GameRoom {
       if (distance(projectile.x, projectile.y, enemy.x, enemy.y) < PROJECTILE_HIT_RADIUS) {
         const damageDealt = projectile.damage;
         enemy.life -= damageDealt;
+        if (enemyIsBoss(enemyId)) {
+          this.recordBossDamage(projectile.shooterId, damageDealt);
+        }
         this.pendingProjectileHitDealt.push({
           id: `hit-dealt-${randomEventSuffix()}`,
           targetKind: "octopus",
@@ -1042,12 +1132,16 @@ export class GameRoom {
         this.projectiles.delete(projectileId);
         if (enemy.life <= 0) {
           this.enemies.delete(enemyId);
-          const shooter = this.players.get(projectile.shooterId);
-          if (shooter && !shooter.isGhost) {
-            shooter.experience = (shooter.experience ?? 0) + XP_PER_OCTOPUS_OR_STINGRAY;
-            shooter.killsOctopus = (shooter.killsOctopus ?? 0) + 1;
-            shooter.level = getLevelFromExperience(shooter.experience);
-            this.players.set(projectile.shooterId, shooter);
+          if (enemyIsBoss(enemyId)) {
+            this.grantBossExperienceByDamageShare(projectile.shooterId);
+          } else {
+            const shooter = this.players.get(projectile.shooterId);
+            if (shooter && !shooter.isGhost) {
+              shooter.experience = (shooter.experience ?? 0) + XP_PER_OCTOPUS_OR_STINGRAY;
+              shooter.killsOctopus = (shooter.killsOctopus ?? 0) + 1;
+              shooter.level = getLevelFromExperience(shooter.experience);
+              this.players.set(projectile.shooterId, shooter);
+            }
           }
         }
         return true;

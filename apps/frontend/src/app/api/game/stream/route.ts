@@ -3,6 +3,13 @@ import { ensureServerGameFeatureFlagsLoaded, GAME_LOOP_INTERVAL_MS, getGameEngin
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+/** Track concurrent SSE streams per room/player to avoid removing active players during EventSource reconnect races. */
+const activeStreamCountByRoomAndPlayer = new Map<string, number>();
+
+function streamKey(roomId: string, playerId: string): string {
+  return `${roomId}::${playerId}`;
+}
+
 export async function GET(request: Request): Promise<Response> {
   const url = new URL(request.url);
   const roomId = url.searchParams.get("roomId") ?? "default";
@@ -14,6 +21,9 @@ export async function GET(request: Request): Promise<Response> {
   await ensureServerGameFeatureFlagsLoaded();
   const engine = getGameEngine();
   const room = engine.getRoom(roomId);
+  const key = streamKey(roomId, playerId);
+  const nextActiveCount = (activeStreamCountByRoomAndPlayer.get(key) ?? 0) + 1;
+  activeStreamCountByRoomAndPlayer.set(key, nextActiveCount);
   room.touchPlayer(playerId);
 
   const encoder = new TextEncoder();
@@ -25,7 +35,13 @@ export async function GET(request: Request): Promise<Response> {
     cleanedUp = true;
     if (intervalId) clearInterval(intervalId);
     intervalId = null;
-    room.removePlayer(playerId);
+    const currentActiveCount = activeStreamCountByRoomAndPlayer.get(key) ?? 0;
+    if (currentActiveCount <= 1) {
+      activeStreamCountByRoomAndPlayer.delete(key);
+      room.removePlayer(playerId);
+      return;
+    }
+    activeStreamCountByRoomAndPlayer.set(key, currentActiveCount - 1);
   };
 
   request.signal.addEventListener("abort", cleanup);

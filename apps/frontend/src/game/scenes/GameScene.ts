@@ -95,6 +95,7 @@ const DEATH_PRAT_OVERLAY_DEPTH = 100000;
 const TOWN_OWNED_BLINK_HALF_PERIOD_MS = 1000;
 /** Ease local boat and carried stingray toward SSE targets (same idea as remote boat smoothing). */
 const STINGRAY_CARRY_POSITION_SMOOTHING_RATE = 22;
+const PRAT_CAPTURE_RETRY_COOLDOWN_MS = 250;
 const TOWN_OWNER_NAME_OFFSET_ABOVE_LETTER_PX = 36;
 /** Soft pink for local-owned town letter (avoids harsh blue at night). */
 const TOWN_LETTER_COLOR_LOCAL = "#c989a8";
@@ -102,6 +103,7 @@ const TOWN_GLOW_COLOR_LOCAL = "#f5c6dc";
 /** Muted plum / lavender for other players' towns. */
 const TOWN_LETTER_COLOR_OTHER_OWNER = "#8b6b8f";
 const TOWN_GLOW_COLOR_OTHER_OWNER = "#e0c4e8";
+const BOSS_IDENTIFIER_PREFIX = "boss-";
 
 type PratTransitionOverlayOptions = {
   labelText: string;
@@ -210,6 +212,10 @@ function normalizeDirection(
   return { x: deltaX / length, y: deltaY / length };
 }
 
+function enemyIsBoss(enemyId: string): boolean {
+  return enemyId.startsWith(BOSS_IDENTIFIER_PREFIX);
+}
+
 export class GameScene extends Phaser.Scene {
   private boat!: Phaser.Physics.Arcade.Sprite;
   private boatNameLabel!: Phaser.GameObjects.BitmapText;
@@ -217,7 +223,7 @@ export class GameScene extends Phaser.Scene {
   private moveTargetY: number | null = null;
   private readonly moveArrivalThreshold = simulationToPhaserPixels(PLAYER_MOVE_ARRIVAL_THRESHOLD_SIMULATION_UNITS);
   private pratEntities = new Map<string, PratEntity>();
-  private pratCaptureRequestSent = new Set<string>();
+  private pratCaptureLastRequestAtById = new Map<string, number>();
   private townEntities = new Map<string, TownEntity>();
   /** Tracks town ownership across SSE frames so we can toast on local capture. */
   private townPreviousOwnerById = new Map<string, string | null>();
@@ -322,6 +328,10 @@ export class GameScene extends Phaser.Scene {
   private readonly mobileJoystickWorldScratch = new Phaser.Math.Vector2();
   /** Short-lived; kept so we can pin it to the viewport while the camera moves. */
   private mobileTutorialHudText: Phaser.GameObjects.BitmapText | null = null;
+  /** Continuous HUD pointer toward boss while it exists. */
+  private bossDirectionArrow: Phaser.GameObjects.Triangle | null = null;
+  private bossWorldTargetX: number | null = null;
+  private bossWorldTargetY: number | null = null;
 
   constructor() {
     super({ key: "GameScene" });
@@ -709,7 +719,7 @@ export class GameScene extends Phaser.Scene {
       entity.text.destroy();
     }
     this.pratEntities.clear();
-    this.pratCaptureRequestSent.clear();
+    this.pratCaptureLastRequestAtById.clear();
     for (const entity of this.townEntities.values()) {
       entity.text.destroy();
       entity.nameLabel.destroy();
@@ -750,6 +760,10 @@ export class GameScene extends Phaser.Scene {
     this.ghostHudText = null;
     this.deathPratOverlayRoot?.destroy(true);
     this.deathPratOverlayRoot = null;
+    this.bossDirectionArrow?.destroy();
+    this.bossDirectionArrow = null;
+    this.bossWorldTargetX = null;
+    this.bossWorldTargetY = null;
   }
 
   /**
@@ -1273,6 +1287,7 @@ export class GameScene extends Phaser.Scene {
 
     this.checkPratCapture();
     this.smoothRemoteBoatSpritesTowardAuthoritativeState();
+    this.updateBossDirectionArrow();
   }
 
   private updateCameraZoom(): void {
@@ -1488,6 +1503,59 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  private ensureBossDirectionArrowExists(): void {
+    if (this.bossDirectionArrow) return;
+    const arrow = this.add.triangle(0, 0, 24, 0, -12, -12, -12, 12, 0xaa1111, 0.95);
+    arrow.setScrollFactor(0);
+    arrow.setDepth(1600);
+    arrow.setStrokeStyle(2, 0xffffff, 0.75);
+    arrow.setVisible(false);
+    this.bossDirectionArrow = arrow;
+  }
+
+  private updateBossDirectionArrow(): void {
+    if (!this.boat) return;
+    this.ensureBossDirectionArrowExists();
+    const arrow = this.bossDirectionArrow;
+    if (!arrow) return;
+    if (this.bossWorldTargetX === null || this.bossWorldTargetY === null) {
+      arrow.setVisible(false);
+      return;
+    }
+    const camera = this.cameras.main;
+    if (camera.worldView.contains(this.bossWorldTargetX, this.bossWorldTargetY)) {
+      arrow.setVisible(false);
+      return;
+    }
+    const directionX = this.bossWorldTargetX - this.boat.x;
+    const directionY = this.bossWorldTargetY - this.boat.y;
+    const length = Math.sqrt(directionX * directionX + directionY * directionY);
+    if (length < 0.001) {
+      arrow.setVisible(false);
+      return;
+    }
+    const normalizedDirectionX = directionX / length;
+    const normalizedDirectionY = directionY / length;
+    const halfWidth = this.scale.width / 2;
+    const halfHeight = this.scale.height / 2;
+    const edgeMargin = 54;
+    const horizontalScale =
+      Math.abs(normalizedDirectionX) < 0.001
+        ? Number.POSITIVE_INFINITY
+        : (halfWidth - edgeMargin) / Math.abs(normalizedDirectionX);
+    const verticalScale =
+      Math.abs(normalizedDirectionY) < 0.001
+        ? Number.POSITIVE_INFINITY
+        : (halfHeight - edgeMargin) / Math.abs(normalizedDirectionY);
+    const edgeDistance = Math.min(horizontalScale, verticalScale);
+    arrow.setPosition(
+      halfWidth + normalizedDirectionX * edgeDistance,
+      halfHeight + normalizedDirectionY * edgeDistance
+    );
+    arrow.setRotation(Math.atan2(normalizedDirectionY, normalizedDirectionX));
+    arrow.setVisible(true);
+  }
+
   private applyServerGameState(state: SerializableGameState): void {
     this.applyServerPlayersState(state);
     this.applyServerPratsState(state);
@@ -1652,7 +1720,7 @@ export class GameScene extends Phaser.Scene {
         if (!seenIds.has(id)) {
           this.pratEntities.get(id)?.text.destroy();
           this.pratEntities.delete(id);
-          this.pratCaptureRequestSent.delete(id);
+          this.pratCaptureLastRequestAtById.delete(id);
         }
       }
     } catch {
@@ -2110,15 +2178,22 @@ export class GameScene extends Phaser.Scene {
     if (!this.textures.exists("octopus")) return;
     try {
       const seenIds = new Set<string>();
+      let currentBossWorldTargetX: number | null = null;
+      let currentBossWorldTargetY: number | null = null;
       for (const [id, enemy] of Object.entries(state.enemies)) {
         seenIds.add(id);
         const enemyX = snapToPixel(simulationToPhaserPixels(enemy.x));
         const enemyY = snapToPixel(simulationToPhaserPixels(enemy.y));
+        const isBossEnemy = enemyIsBoss(id);
+        if (isBossEnemy) {
+          currentBossWorldTargetX = enemyX;
+          currentBossWorldTargetY = enemyY;
+        }
 
         let entity = this.octopuses.get(id);
         if (!entity) {
           const sprite = this.add.image(enemyX, enemyY, "octopus");
-          sprite.setScale(0.8);
+          sprite.setScale(isBossEnemy ? 1.5 : 0.8);
           sprite.setDepth(5);
           sprite.setInteractive({ useHandCursor: true });
           const lifeBar = this.add.graphics().setDepth(7);
@@ -2133,6 +2208,7 @@ export class GameScene extends Phaser.Scene {
           this.octopuses.set(id, entity);
         } else {
           entity.sprite.setPosition(snapToPixel(enemyX), snapToPixel(enemyY));
+          entity.sprite.setScale(isBossEnemy ? 1.5 : 0.8);
           entity.life = enemy.life;
           entity.lastShotTime = enemy.lastShotTime;
           entity.spawnTime = enemy.spawnTime;
@@ -2141,8 +2217,24 @@ export class GameScene extends Phaser.Scene {
         const maxLife = enemy.maxLife > 0 ? enemy.maxLife : OCTOPUS_LIFE;
         const lifeRatio = enemy.life / maxLife;
         entity.lifeBar.clear();
-        this.drawBar(entity.lifeBar, enemyX - 25, enemyY - 50, 50, 6, 0x333333, 0xff0000, lifeRatio);
+        const bossLifeBarWidth = isBossEnemy ? 84 : 50;
+        const bossLifeBarX = enemyX - bossLifeBarWidth / 2;
+        const bossLifeBarY = isBossEnemy ? enemyY - 72 : enemyY - 50;
+        const bossLifeBarHeight = isBossEnemy ? 8 : 6;
+        const bossLifeBarColor = isBossEnemy ? 0xcc2222 : 0xff0000;
+        this.drawBar(
+          entity.lifeBar,
+          bossLifeBarX,
+          bossLifeBarY,
+          bossLifeBarWidth,
+          bossLifeBarHeight,
+          0x333333,
+          bossLifeBarColor,
+          lifeRatio
+        );
       }
+      this.bossWorldTargetX = currentBossWorldTargetX;
+      this.bossWorldTargetY = currentBossWorldTargetY;
 
       for (const id of Array.from(this.octopuses.keys())) {
         if (!seenIds.has(id)) {
@@ -2247,18 +2339,20 @@ export class GameScene extends Phaser.Scene {
   private checkPratCapture(): void {
     const boatX = this.boat.x;
     const boatY = this.boat.y;
+    const now = Date.now();
 
     for (const [pratId, entity] of this.pratEntities) {
-      if (this.pratCaptureRequestSent.has(pratId)) continue;
+      const lastRequestAt = this.pratCaptureLastRequestAtById.get(pratId) ?? 0;
+      if (now - lastRequestAt < PRAT_CAPTURE_RETRY_COOLDOWN_MS) continue;
 
       const distance = Phaser.Math.Distance.Between(boatX, boatY, entity.text.x, entity.text.y);
 
       if (distance < PRAT_CAPTURE_RADIUS_PIXELS) {
-        this.pratCaptureRequestSent.add(pratId);
+        this.pratCaptureLastRequestAtById.set(pratId, now);
         this.recordSessionAction();
         void this.multiplayer.sendGameInput({
           type: "PRAT_CAPTURE",
-          timestamp: Date.now(),
+          timestamp: now,
           pratId,
           x: phaserPixelsToSimulation(boatX),
           y: phaserPixelsToSimulation(boatY),

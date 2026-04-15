@@ -86,7 +86,6 @@ const STINGRAY_SPAWN_INTERVAL_MS = 4000;
 /** Wrapped rays no longer despawn at the east edge, so cap count or spawns would grow without limit. */
 const MAX_STINGRAYS_IN_WORLD = 6;
 const STINGRAY_VENGEANCE_HERD_SIZE = 16;
-const STINGRAY_VENGEANCE_DURATION_MS = 10_000;
 const STINGRAY_VENGEANCE_SPEED_MULTIPLIER = 2.2;
 const STINGRAY_VENGEANCE_TRIGGER_COOLDOWN_MS = 4_000;
 const STINGRAY_VENGEANCE_SPAWN_OFFSET_FROM_KILLER_X = 550;
@@ -911,8 +910,7 @@ export class GameRoom {
 
     for (const stingray of this.stingrays.values()) {
       const targetPlayerId = stingray.vengeanceTargetPlayerId;
-      const vengeanceEndsAtTimestamp = stingray.vengeanceEndsAtTimestamp ?? 0;
-      const inVengeanceMode = targetPlayerId !== undefined && now <= vengeanceEndsAtTimestamp;
+      const inVengeanceMode = typeof targetPlayerId === "string" && targetPlayerId.length > 0;
       if (inVengeanceMode) {
         stingray.x += STINGRAY_SPEED_SIMULATION_UNITS_PER_SECOND * deltaSeconds;
         const elapsedSeconds = (now - stingray.spawnTime) / 1000;
@@ -925,12 +923,6 @@ export class GameRoom {
           continue;
         }
       } else {
-        if (targetPlayerId !== undefined) {
-          stingray.vengeanceTargetPlayerId = undefined;
-          stingray.vengeanceEndsAtTimestamp = undefined;
-          stingray.baseY = stingray.y;
-          stingray.spawnTime = now;
-        }
         stingray.x += STINGRAY_SPEED_SIMULATION_UNITS_PER_SECOND * deltaSeconds;
         stingray.x = wrapPlayableX(stingray.x);
         const elapsedSeconds = (now - stingray.spawnTime) / 1000;
@@ -1151,7 +1143,6 @@ export class GameRoom {
         baseY: spawnY,
         spawnTime: now,
         vengeanceTargetPlayerId: killerId,
-        vengeanceEndsAtTimestamp: now + STINGRAY_VENGEANCE_DURATION_MS,
       });
     }
   }

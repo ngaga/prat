@@ -2179,9 +2179,9 @@ export class GameScene extends Phaser.Scene {
           }
         }
         if (isVengeance) {
-          entity.sprite.setTint(0xcc2222);
+          entity.sprite.setTintFill(0xcc2222);
         } else {
-          entity.sprite.setTint(0x00aa00);
+          entity.sprite.setTintFill(0x00aa00);
         }
         const lifeRatio = ray.life / maxLife;
         entity.lifeBar.clear();

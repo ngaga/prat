@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { z } from "zod";
 import { EventBus } from "../EventBus";
 import { MultiplayerManager, type RemotePlayer } from "../multiplayer/MultiplayerManager";
 import type { PlayerState, PratState, SerializableGameState, TownState } from "@/lib/gameTypes";
@@ -111,6 +112,14 @@ type PratTransitionOverlayOptions = {
   scaleInDurationMs: number;
   fadeOutDurationMs: number;
 };
+
+const gameSceneInitSchema = z
+  .object({
+    octopusesEnabled: z.boolean().optional(),
+    stingraysEnabled: z.boolean().optional(),
+    playerName: z.string().optional(),
+  })
+  .optional();
 
 const DEFAULT_PRAT_TRANSITION_OVERLAY: PratTransitionOverlayOptions = {
   labelText: DEATH_PRAT_LABEL_TEXT,
@@ -339,10 +348,12 @@ export class GameScene extends Phaser.Scene {
     super({ key: "GameScene" });
   }
 
-  init(data: { octopusesEnabled?: boolean; stingraysEnabled?: boolean; playerName?: string }): void {
-    this.octopusesEnabled = coerceClientFeatureFlag(data?.octopusesEnabled);
-    this.stingraysEnabled = coerceClientFeatureFlag(data?.stingraysEnabled);
-    this.playerName = data?.playerName ?? null;
+  init(data: unknown): void {
+    const parsedData = gameSceneInitSchema.safeParse(data);
+    const initData = parsedData.success ? parsedData.data : undefined;
+    this.octopusesEnabled = coerceClientFeatureFlag(initData?.octopusesEnabled);
+    this.stingraysEnabled = coerceClientFeatureFlag(initData?.stingraysEnabled);
+    this.playerName = initData?.playerName ?? null;
   }
 
   private createMsdfBitmapText(

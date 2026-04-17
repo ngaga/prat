@@ -25,6 +25,13 @@ export interface Player {
   prats?: number;
   is_ghost?: boolean;
   ghost_prats_captured?: number;
+  updated_at?: string;
+}
+
+export interface UpsertPlayerResult {
+  success: boolean;
+  conflict?: boolean;
+  current_updated_at?: string;
 }
 
 export async function getPlayerByName(name: string): Promise<Player | null> {
@@ -54,11 +61,12 @@ export async function upsertPlayer(player: {
   prats?: number;
   is_ghost?: boolean;
   ghost_prats_captured?: number;
-}): Promise<boolean> {
+  expected_updated_at?: string;
+}): Promise<UpsertPlayerResult> {
   try {
     const base = getBackendBaseUrl();
     if (!base) {
-      return false;
+      return { success: false };
     }
     const response = await fetch(`${base}/api/players`, {
       method: "POST",
@@ -73,15 +81,21 @@ export async function upsertPlayer(player: {
         prats: player.prats ?? 0,
         is_ghost: player.is_ghost ?? false,
         ghost_prats_captured: player.ghost_prats_captured ?? 0,
+        expected_updated_at: player.expected_updated_at,
       }),
     });
-    const result = await parseResponseJsonOrNull<{ success: boolean; error?: string }>(response);
+    const result = await parseResponseJsonOrNull<UpsertPlayerResult & { error?: string }>(response);
     if (!result) {
-      return false;
+      return { success: false };
     }
-    return result.success === true;
+    return {
+      success: result.success === true,
+      conflict: result.conflict === true,
+      current_updated_at:
+        typeof result.current_updated_at === "string" ? result.current_updated_at : undefined,
+    };
   } catch (error) {
     console.error("upsertPlayer error:", error);
-    return false;
+    return { success: false };
   }
 }

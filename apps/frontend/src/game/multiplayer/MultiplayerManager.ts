@@ -24,6 +24,7 @@ export interface MultiplayerCallbacks {
   onRemotePlayerUpdate: (players: Map<string, RemotePlayer>) => void;
   onConnected?: () => void;
   onGameStateUpdate?: (state: SerializableGameState) => void;
+  onGameStreamOpen?: () => void;
   getLocalState: () => {
     x: number;
     y: number;
@@ -101,6 +102,9 @@ export class MultiplayerManager {
     });
     const url = `/api/game/stream?${query.toString()}`;
     this.gameEventSource = new EventSource(url);
+    this.gameEventSource.onopen = () => {
+      this.callbacks.onGameStreamOpen?.();
+    };
     this.gameEventSource.onmessage = (event: MessageEvent<string>) => {
       try {
         const state = JSON.parse(event.data) as SerializableGameState;

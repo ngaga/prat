@@ -24,6 +24,13 @@ export async function GET(request: Request): Promise<Response> {
   const key = streamKey(roomId, playerId);
   const nextActiveCount = (activeStreamCountByRoomAndPlayer.get(key) ?? 0) + 1;
   activeStreamCountByRoomAndPlayer.set(key, nextActiveCount);
+  if (nextActiveCount > 1) {
+    console.warn("[game-stream] concurrent streams for same player", {
+      roomId,
+      playerId,
+      activeStreamCount: nextActiveCount,
+    });
+  }
   room.touchPlayer(playerId);
 
   const encoder = new TextEncoder();
@@ -36,6 +43,14 @@ export async function GET(request: Request): Promise<Response> {
     if (intervalId) clearInterval(intervalId);
     intervalId = null;
     const currentActiveCount = activeStreamCountByRoomAndPlayer.get(key) ?? 0;
+    if (currentActiveCount <= 0) {
+      console.warn("[game-stream] cleanup without active stream count", {
+        roomId,
+        playerId,
+      });
+      activeStreamCountByRoomAndPlayer.delete(key);
+      return;
+    }
     if (currentActiveCount <= 1) {
       activeStreamCountByRoomAndPlayer.delete(key);
       room.removePlayer(playerId);

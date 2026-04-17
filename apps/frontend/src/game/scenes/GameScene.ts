@@ -106,6 +106,7 @@ const TOWN_GLOW_COLOR_LOCAL = "#f5c6dc";
 const TOWN_LETTER_COLOR_OTHER_OWNER = "#8b6b8f";
 const TOWN_GLOW_COLOR_OTHER_OWNER = "#e0c4e8";
 const BOSS_IDENTIFIER_PREFIX = "boss-";
+const PROFILE_SYNC_HEARTBEAT_MS = 30_000;
 
 type PratTransitionOverlayOptions = {
   labelText: string;
@@ -299,6 +300,9 @@ export class GameScene extends Phaser.Scene {
   private localIsGhost = false;
   /** Mirrors server ghost prat count; used for Supabase persistence like experience. */
   private syncedGhostPratsCaptured = 0;
+  /** Optimistic concurrency token from the player profile row (prevents stale local overwrite). */
+  private profileUpdatedAtToken: string | undefined;
+  private profileSyncHeartbeatIntervalId: ReturnType<typeof setInterval> | null = null;
   private ghostHudText: Phaser.GameObjects.BitmapText | null = null;
   /** True when the game canvas uses CSS invert for local ghost mode (affects boat tint vs clear tint). */
   private ghostCameraInversionActive = false;
@@ -415,6 +419,10 @@ export class GameScene extends Phaser.Scene {
         if (!this.isSceneActive) return;
         this.applyServerGameState(state);
       },
+      onGameStreamOpen: () => {
+        if (!this.isSceneActive) return;
+        void this.sendProfileSync("sse-open");
+      },
       getLocalState: () => {
         if (!this.boat) {
           return {
@@ -456,23 +464,11 @@ export class GameScene extends Phaser.Scene {
         this.prats = existingPlayer.prats ?? 0;
         this.localIsGhost = existingPlayer.is_ghost ?? false;
         this.syncedGhostPratsCaptured = existingPlayer.ghost_prats_captured ?? 0;
+        this.profileUpdatedAtToken = existingPlayer.updated_at;
       } else {
-        const created = await upsertPlayer({
-          name: this.playerName ?? undefined,
-          exp: 0,
-          level: 1,
-          kills_octopus: 0,
-          kills_stingray: 0,
-          prats_captured: 0,
-          prats: 0,
-          is_ghost: false,
-          ghost_prats_captured: 0,
+        console.warn("[game-scene] missing player profile at startup, skipping zero-profile upsert", {
+          playerName: this.playerName,
         });
-        if (!created) {
-          console.warn("Failed to create player in database");
-        } else {
-          resolvedPlayer = await getPlayerByName(this.playerName);
-        }
       }
     }
 
@@ -504,23 +500,14 @@ export class GameScene extends Phaser.Scene {
     this.scale.on("resize", this.updateCameraZoom, this);
 
     // Apply profile on the server before SSE: first snapshot would otherwise use default level 1 and overwrite DB values.
-    try {
-      await this.multiplayer.sendGameInput({
-        type: "SYNC_PROFILE",
-        timestamp: Date.now(),
-        experience: this.experience,
-        killsOctopus: this.killsOctopus,
-        killsStingray: this.killsStingray,
-        pratsCaptured: this.pratsCaptured,
-        prats: this.prats,
-        ...(ghostRestoreFromDb ? ghostRestoreFromDb : {}),
-      });
-    } catch {
-      // Still connect; HUD may briefly mismatch until the next successful sync.
-    }
+    await this.sendProfileSync("initial-load", ghostRestoreFromDb);
 
     // Start SSE after the boat exists so damage VFX always has a world position (sprite or snapshot fallback).
     this.multiplayer.connectGameStream("default");
+    this.profileSyncHeartbeatIntervalId = setInterval(() => {
+      if (!this.isSceneActive) return;
+      void this.sendProfileSync("heartbeat");
+    }, PROFILE_SYNC_HEARTBEAT_MS);
 
     if (typeof window !== "undefined") {
       // Tab close and many navigations skip Phaser shutdown; still a normal player exit (not a crash signal).
@@ -646,7 +633,7 @@ export class GameScene extends Phaser.Scene {
 
   private async savePlayer(): Promise<void> {
     if (!this.playerName) return;
-    await upsertPlayer({
+    const result = await upsertPlayer({
       name: this.playerName,
       exp: this.experience,
       level: this.level,
@@ -656,7 +643,47 @@ export class GameScene extends Phaser.Scene {
       prats: this.prats,
       is_ghost: this.localIsGhost,
       ghost_prats_captured: this.syncedGhostPratsCaptured,
+      expected_updated_at: this.profileUpdatedAtToken,
     });
+    if (result.success) {
+      this.profileUpdatedAtToken = result.current_updated_at ?? this.profileUpdatedAtToken;
+      return;
+    }
+    if (result.conflict) {
+      console.warn("[game-scene] prevented stale profile overwrite", {
+        playerName: this.playerName,
+        expectedUpdatedAt: this.profileUpdatedAtToken,
+        currentUpdatedAt: result.current_updated_at,
+      });
+      this.profileUpdatedAtToken = result.current_updated_at ?? this.profileUpdatedAtToken;
+    }
+  }
+
+  private async sendProfileSync(
+    reason: "initial-load" | "sse-open" | "heartbeat",
+    overrides?: { isGhost: true; ghostPratsCaptured: number }
+  ): Promise<void> {
+    try {
+      await this.multiplayer.sendGameInput({
+        type: "SYNC_PROFILE",
+        timestamp: Date.now(),
+        experience: this.experience,
+        killsOctopus: this.killsOctopus,
+        killsStingray: this.killsStingray,
+        pratsCaptured: this.pratsCaptured,
+        prats: this.prats,
+        ...(overrides
+          ? overrides
+          : this.localIsGhost
+            ? { isGhost: true, ghostPratsCaptured: this.syncedGhostPratsCaptured }
+            : {}),
+      });
+    } catch {
+      console.warn("[game-scene] profile sync failed", {
+        playerName: this.playerName,
+        reason,
+      });
+    }
   }
 
   private showLevelUpMessage(newLevel: number): void {
@@ -698,6 +725,10 @@ export class GameScene extends Phaser.Scene {
 
   shutdown(): void {
     this.isSceneActive = false;
+    if (this.profileSyncHeartbeatIntervalId) {
+      clearInterval(this.profileSyncHeartbeatIntervalId);
+      this.profileSyncHeartbeatIntervalId = null;
+    }
     if (typeof window !== "undefined" && this.sessionPageHideHandler) {
       window.removeEventListener("pagehide", this.sessionPageHideHandler);
       this.sessionPageHideHandler = null;
@@ -1653,10 +1684,21 @@ export class GameScene extends Phaser.Scene {
       this.hudSyncedFromServer = true;
 
       const previousLevel = this.level;
+      const previousExperience = this.experience;
       this.life = newLife;
       this.score = newScore;
       this.level = me.level ?? 1;
       this.experience = me.experience ?? 0;
+      if (this.level < previousLevel || this.experience < previousExperience) {
+        console.warn("[game-scene] authoritative profile regression detected", {
+          playerId: localPlayerId,
+          previousLevel,
+          nextLevel: this.level,
+          previousExperience,
+          nextExperience: this.experience,
+          serverTimestamp: state.timestamp,
+        });
+      }
       this.killsOctopus = me.killsOctopus ?? 0;
       this.killsStingray = me.killsStingray ?? 0;
       this.pratsCaptured = me.pratsCaptured ?? 0;

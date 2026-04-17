@@ -1,5 +1,6 @@
 import { Logger } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
+import { FastifyAdapter, NestFastifyApplication } from "@nestjs/platform-fastify";
 import { AppModule } from "./app.module";
 
 function corsOrigin(): boolean | string[] {
@@ -16,7 +17,7 @@ function corsOrigin(): boolean | string[] {
 }
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter());
   app.setGlobalPrefix("api");
   app.enableCors({
     origin: corsOrigin(),

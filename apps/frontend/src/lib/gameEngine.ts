@@ -205,6 +205,7 @@ function enemyIsBoss(enemyId: string): boolean {
 export class GameRoom {
   readonly roomId: string;
   private players = new Map<string, PlayerState>();
+  private recentlyRemovedPlayers = new Map<string, { removedAt: number; state: PlayerState }>();
   private playerPresence = new Map<string, number>();
   private enemies = new Map<string, EnemyState>();
   private stingrays = new Map<string, StingrayState>();
@@ -238,6 +239,7 @@ export class GameRoom {
   private nextBossSpawnAtLevelSum = LEVEL_SUM_PER_BOSS_SPAWN;
   private bossDamageByPlayerId = new Map<string, number>();
   private lastVengeanceHerdSpawnAtByKillerId = new Map<string, number>();
+  private readonly recentPlayerStateRetentionMs = 15_000;
 
   constructor(roomId: string) {
     this.roomId = roomId;
@@ -278,6 +280,17 @@ export class GameRoom {
       isGhost: false,
       ghostPratsCaptured: 0,
     };
+  }
+
+  private getRecentlyRemovedPlayerState(playerId: string): PlayerState | null {
+    const cached = this.recentlyRemovedPlayers.get(playerId);
+    if (!cached) return null;
+    if (Date.now() - cached.removedAt > this.recentPlayerStateRetentionMs) {
+      this.recentlyRemovedPlayers.delete(playerId);
+      return null;
+    }
+    this.recentlyRemovedPlayers.delete(playerId);
+    return { ...cached.state };
   }
 
   private spawnInitialPrats(): void {
@@ -371,7 +384,16 @@ export class GameRoom {
   touchPlayer(playerId: string): void {
     this.playerPresence.set(playerId, Date.now());
     if (!this.players.has(playerId)) {
-      this.players.set(playerId, this.defaultPlayer(playerId));
+      const recoveredState = this.getRecentlyRemovedPlayerState(playerId);
+      if (recoveredState) {
+        this.players.set(playerId, recoveredState);
+      } else {
+        console.warn("[game-room] creating default player state", {
+          roomId: this.roomId,
+          playerId,
+        });
+        this.players.set(playerId, this.defaultPlayer(playerId));
+      }
     }
     this.emptySince = null;
   }
@@ -379,6 +401,14 @@ export class GameRoom {
   removePlayer(playerId: string): void {
     this.playerPresence.delete(playerId);
     this.lastAcceptedMoveClientWallTimestamp.delete(playerId);
+    const existingPlayer = this.players.get(playerId);
+    if (existingPlayer) {
+      // Keep a short-lived snapshot to survive EventSource reconnect races.
+      this.recentlyRemovedPlayers.set(playerId, {
+        removedAt: Date.now(),
+        state: { ...existingPlayer },
+      });
+    }
     this.players.delete(playerId);
     if (this.players.size === 0 && this.emptySince === null) {
       this.emptySince = Date.now();
@@ -437,8 +467,23 @@ export class GameRoom {
     }
     if (input.type === "SYNC_PROFILE") {
       const previous = this.players.get(playerId) ?? this.defaultPlayer(playerId);
-      let experience = previous.experience ?? 0;
-      if (input.experience !== undefined) experience = input.experience;
+      const previousExperience = Math.max(0, Math.floor(Number(previous.experience) || 0));
+      let experience = previousExperience;
+      if (input.experience !== undefined) {
+        const candidateExperience = Math.max(0, Math.floor(Number(input.experience) || 0));
+        if (candidateExperience < previousExperience) {
+          console.warn("[game-room] ignored profile experience regression", {
+            roomId: this.roomId,
+            playerId,
+            previousExperience,
+            candidateExperience,
+            previousLevel: previous.level ?? 1,
+            candidateLevel: getLevelFromExperience(candidateExperience),
+          });
+        } else {
+          experience = candidateExperience;
+        }
+      }
       const level = getLevelFromExperience(experience);
 
       let nextIsGhost = previous.isGhost ?? false;

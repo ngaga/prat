@@ -1555,6 +1555,10 @@ export class GameEngine {
       if (room.shouldCleanup(now)) {
         room.stopLoop();
         this.rooms.delete(roomId);
+        console.info("[game-engine] room cleaned up by maintenance", {
+          roomId,
+          timestamp: now,
+        });
       }
     }
   }
